@@ -1,46 +1,204 @@
 ## Frequently asked questions
 
+### HTTPS access for server and client
+
+Have files `private_key.pem` and `cert.pem` from your own SSL, or if do not have such files, generate by doing:
+```bash
+openssl req -x509 -newkey rsa:4096 -keyout private_key.pem -out cert.pem -days 3650 -nodes -subj '/O=H2OGPT'
+```
+
+Consider the server (not h2oGPT but gradio based) for end-to-end example:
+```python
+import gradio as gr
+import random
+import time
+
+with gr.Blocks() as demo:
+    chatbot = gr.Chatbot()
+    msg = gr.Textbox()
+    clear = gr.ClearButton([msg, chatbot])
+
+    def respond(message, chat_history):
+        bot_message = random.choice(["How are you?", "I love you", "I'm very hungry"])
+        chat_history.append((message, bot_message))
+        time.sleep(2)
+        return "", chat_history
+
+    msg.submit(respond, [msg, chatbot], [msg, chatbot], api_name='chat')
+
+demo.launch(ssl_verify=False, ssl_keyfile='private_key.pem', ssl_certfile='cert.pem', share=False)
+```
+The key and cert files are passed to the server, with `ssl_verify=False` to avoid asking a known source to verify.  This is required to have https but allow the server to talk to itself and via the UI in the browser.  The browser will warn about ssl key not being verified, just proceed anyways.
+
+Then the client needs to also not verify when talking to the server running https, which gradio client does not handle itself.  One can use a context manager as follows:
+```python
+import contextlib
+import warnings
+import requests
+from urllib3.exceptions import InsecureRequestWarning
+
+old_merge_environment_settings = requests.Session.merge_environment_settings
+
+
+@contextlib.contextmanager
+def no_ssl_verification():
+    opened_adapters = set()
+
+    def merge_environment_settings(self, url, proxies, stream, verify, cert):
+        # Verification happens only once per connection so we need to close
+        # all the opened adapters once we're done. Otherwise, the effects of
+        # verify=False persist beyond the end of this context manager.
+        opened_adapters.add(self.get_adapter(url))
+
+        settings = old_merge_environment_settings(self, url, proxies, stream, verify, cert)
+        settings['verify'] = False
+
+        return settings
+
+    requests.Session.merge_environment_settings = merge_environment_settings
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', InsecureRequestWarning)
+            yield
+    finally:
+        requests.Session.merge_environment_settings = old_merge_environment_settings
+
+        for adapter in opened_adapters:
+            try:
+                adapter.close()
+            except:
+                pass
+```
+Then with this one is able to talk to the server using https:
+
+```python
+from gradio_client import Client
+HOST_URL ="https://localhost:7860"
+
+with no_ssl_verification():
+    client = Client(HOST_URL, serialize=False)
+    chatbot = [['foo', 'doo']]
+    res = client.predict('Hello', chatbot, api_name='/chat')
+    print(res)
+```
+which prints out something like:
+```text
+Loaded as API: https://localhost:7860/ ✔
+('', [['foo', 'doo'], ['Hello', 'I love you']])
+```
+
+For h2oGPT, run the server as `python generate.py --ssl_verify=False --ssl_keyfile=<KEYFILE> --ssl_certfile=<CERTFILE> --share=False` for key file `<KEYFILE>` and cert file `<CERTFILE>`, then use gradio client code with context manager as above but use the gradio client endpoints as [documented in readme or test code](README_CLIENT.md).
+
+### RoPE scaling and Long Context Models
+
+For long context models that have been tuned for a specific size, ensure that you set the `--rope_scaling` configuration to match that exact size. For example:
+
+```bash
+python generate.py --rope_scaling="{'type':'linear','factor':4}" --base_model=lmsys/vicuna-13b-v1.5-16k --hf_embedding_model=sentence-transformers/all-MiniLM-L6-v2 --load_8bit=True --langchain_mode=UserData --user_path=user_path --prompt_type=vicuna11 --h2ocolors=False
+````
+
+If the model is Hugging Face-based and already has a `config.json` entry with `rope_scaling` in it, we will use that if you do not pass `--rope_scaling`.
+
 ### Migration from Chroma < 0.4 to > 0.4
 
 #### Option 1: Use old Chroma for old DBs
 
-Do nothing as user.  h2oGPT will by default not migrate for old databases.  This is the default way handled internally by requirements added in `requirements_optional_langchain.txt` by adding special wheels for old versions of chromadb and hnswlib, handling migration better than chromadb itself.
+No action is required from the user. By default, h2oGPT will not migrate for old databases. This is managed internally through requirements added in `requirements_optional_langchain.txt`, which adds special wheels for old versions of `chromadb` and `hnswlib`. This ensures smooth migration handling better than `chromadb` itself.
 
 #### Option 2: Automatically Migrate
 
-h2oGPT by default does not migrate automatically with `--auto_migrate_db=False` for `generate.py`.  One can set this to `True` for auto-migration, which may time some time for larger databases.  This will occur on-demand when accessing a database.  This takes about 0.03s per chunk.
+By default, h2oGPT does not migrate automatically with `--auto_migrate_db=False` for `generate.py`. You can set this to `True` for auto-migration, which may take some time for larger databases.  This will occur on-demand when accessing a database.  This takes about 0.03s per chunk.
 
 #### Option 3: Manually Migrate
 
-One can set that to False and manually migrate databases by doing the following.
+You can set `--auto_migrate_db=False` and manually migrate databases by doing the following.
 
 * Install and run migration tool
-```
-pip install chroma-migrate
-chroma-migrate
-```
+  ```
+  pip install chroma-migrate
+  chroma-migrate
+  ```
 * Choose DuckDB
 * Choose "Files I can use ..."
 * Choose your collection path, e.g. `db_dir_UserData` for collection name `UserData`
 
 ### Adding Models
 
-One can choose any Hugging Face model or quantized GGML model file in h2oGPT.
+You can choose any Hugging Face model or quantized GGML model file in h2oGPT.  Hugging Face models are automatically downloaded to the Hugging Face .cache folder (in home folder).
 
-Hugging Face models are passed via `--base_model` in all cases, with an extra `--load_gptq` for GPTQ models, e.g., by [TheBloke](https://huggingface.co/TheBloke).  Hugging Face models are automatically downloaded to the Hugging Face .cache folder (in home folder).
+#### Hugging Face
+
+Hugging Face models are passed via `--base_model` in all cases, with an extra `--load_gptq` for GPTQ models or an extra `--load_awq` for AWQ models, e.g., by [TheBloke](https://huggingface.co/TheBloke). For example, for AutoGPTQ:
+```bash
+python generate.py --base_model=TheBloke/Nous-Hermes-13B-GPTQ --load_gptq=model --use_safetensors=True --prompt_type=instruct
+```
+and in some cases one has to disable certain features that are not automatically handled by AutoGPTQ package, e.g.
+```bash
+CUDA_VISIBLE_DEVICES=0 python generate.py --base_model=TheBloke/Xwin-LM-13B-v0.2-GPTQ --load_gptq=model --use_safetensors=True --prompt_type=xwin --langchain_mode=UserData --score_model=None --share=False --gradio_offline_level=1 --gptq_dict="{'disable_exllama': True}"
+```
+
+Attention sinks is supported, like:
+```bash
+pip install git+https://github.com/tomaarsen/attention_sinks.git
+python generate.py --base_model=mistralai/Mistral-7B-Instruct-v0.1 --score_model=None --attention_sinks=True --max_new_tokens=100000 --max_max_new_tokens=100000 --top_k_docs=-1 --use_gpu_id=False --max_seq_len=4096 --sink_dict="{'attention_sink_size': 4, 'attention_sink_window_size': 4096}"
+```
+where the attention sink window has to be larger than any prompt input else failures will occur.  If one sets `max_input_tokens` then this will restrict the input tokens and that can be set to same value as `attention_sink_window_size`.
+
+One can increase `--max_seq_len=4096` for Mistral up to maximum of `32768` if GPU has enough memory, or reduce to lower memory needs from input itself, but still get efficient generation of new tokens "without limit".  E.g.
+```bash
+--base_model=mistralai/Mistral-7B-Instruct-v0.1 --score_model=None --attention_sinks=True --max_new_tokens=100000 --max_max_new_tokens=100000 --top_k_docs=-1 --use_gpu_id=False --max_seq_len=8192 --sink_dict="{'attention_sink_size': 4, 'attention_sink_window_size': 8192}"
+```
+
+One can also set `--min_new_tokens` on CLI or in UI to some larger value, but this is risky as it ignores end of sentence token and may do poorly after.  Better to improve prompt, and this is most useful when already consumed context with input from documents (e.g. `top_k_docs=-1`) and still want long generation.  Attention sinks is not yet supported for llama.cpp type models or vLLM/TGI inference servers.
+
+#### AWQ
+
+New quantized AWQ chose good quality, e.g. 70B LLaMa-2 16-bit or AWQ does comparable for many retrieval tasks.
+
+```bash
+python generate.py --base_model=TheBloke/Llama-2-13B-chat-AWQ --load_awq=model --use_safetensors=True --prompt_type=llama2
+```
+
+#### GGML
 
 GGML v3 quantized models are supported, and [TheBloke](https://huggingface.co/TheBloke) also has many of those, e.g.
 ```bash
 python generate.py --base_model=llama --model_path_llama=llama-2-7b-chat.ggmlv3.q8_0.bin --max_seq_len=4096
 ```
-For GGML models, always good to pass `--max_seq_len` directly.  When passing the filename like above, we assume one has previously downloaded the model to the local path, but if one passes a URL, then we download the file for you.
-You can also pass a URL for automatic downloading (which will not re-download if file already exists):
+For GGML models, passing `--max_seq_len` directly is always recommended. When you pass the filename as shown in the preceding example, we assume you have previously downloaded the model to the local path, but if you pass a URL, then we download the file for you.
+You can also pass a URL for automatic downloading (which will not re-download if the file already exists):
 ```bash
 python generate.py --base_model=llama --model_path_llama=https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML/resolve/main/llama-2-7b-chat.ggmlv3.q8_0.bin --max_seq_len=4096
 ```
 for any TheBloke GGML v3 models.
 
-GPT4All models are supported, which are automatically downloaded to a GPT4All cache folder (in the home folder).  E.g.
+#### GGUF
+
+For GGUF model support or CPU llama.cpp support, see [README_LINUX.md](README_LINUX.md) or [README_WINDOWS.md](README_WINDOWS.md) for uninstalling GGML package in favor of GGUF.  As complete example, here is for GPU and CPU using GGUF model.
+
+GGUF using GPU on x86_64 linux:
+```bash
+pip uninstall -y llama-cpp-python llama-cpp-python-cuda
+pip install https://github.com/jllllll/llama-cpp-python-cuBLAS-wheels/releases/download/textgen-webui/llama_cpp_python_cuda-0.1.83+cu117-cp310-cp310-linux_x86_64.whl
+python generate.py --base_model=llama --prompt_type=mistral --model_path_llama=https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.1-GGUF/resolve/main/mistral-7b-instruct-v0.1.Q4_K_M.gguf --max_seq_len=4096 --score_model=None
+```
+That is, currently, for GPU case, the latest llama_cpp_python only uses GGUF, so version number selects GGML vs. GGUF just like for llama.cpp itself.
+
+GGUF using AVX2 on x86_64 linux:
+```bash
+pip uninstall -y llama-cpp-python llama-cpp-python-cuda
+https://github.com/jllllll/llama-cpp-python-cuBLAS-wheels/releases/download/cpu/llama_cpp_python-0.1.83+cpuavx2-cp310-cp310-linux_x86_64.whl
+CUDA_VISIBLE_DEVICES= python generate.py --base_model=llama --prompt_type=mistral --model_path_llama=https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.1-GGUF/resolve/main/mistral-7b-instruct-v0.1.Q4_K_M.gguf --max_seq_len=4096 --score_model=None
+```
+Similarly version of llama cpp python package selects support for GGMLv3 vs. GGUF.  Later versions of llama_cpp_python than shown here may not be supported in h2oGPT, that is untested.
+
+[Similar versions of this package](https://github.com/jllllll/llama-cpp-python-cuBLAS-wheels/releases) also give support for Windows, AMD, Metal, CPU with various AVX choices, GPU, etc.
+
+
+#### GPT4All
+
+GPT4All models are supported, which are automatically downloaded to a GPT4All cache folder (in the home folder). For example:
 ```bash
 python generate.py --base_model=gptj --model_name_gptj=ggml-gpt4all-j-v1.3-groovy.bin
 ```
@@ -50,19 +208,19 @@ python generate.py --base_model=gpt4all_llama --model_name_gpt4all_llama=ggml-wi
 ```
 for GPT4All LLaMa models.
 
-See [README_CPU.md](README_CPU.md) and [README_GPU.md](README_GPU.md) for more information on controlling these parameters.
+For more information on controlling these parameters, see [README_CPU.md](README_CPU.md) and [README_GPU.md](README_GPU.md).
 
 ### Adding Prompt Templates
 
-After specifying a model, one needs to consider if an existing `prompt_type` will work or a new one is required.  E.g. for Vicuna models, a well-defined `prompt_type` is used which we support automatically for specific model names.  If the model is in `prompter.py` as associated with some `prompt_type` name, then we added it already.  See models that are currently supported in this automatic way in [prompter.py](../src/prompter.py) and [enums.py](../src/enums.py).
+After specifying a model, you need to consider if an existing `prompt_type` will work or if a new one is required. For example, for Vicuna models, a well-defined `prompt_type` is used, which we support automatically for specific model names.  If the model is in `prompter.py` as associated with some `prompt_type` name, then we added it already. You can view the models that are currently supported in this automatic way in [prompter.py](../src/prompter.py) and [enums.py](../src/enums.py).
 
 If we do not list the model in `prompter.py`, then if you find a `prompt_type` by name that works for your new model, you can pass `--prompt_type=<NAME>` for some prompt_type `<NAME>`, and we will use that for the new model.
 
-However, in some cases, you need to add a new prompt structure because the model does not conform at all (or exactly enough) to the template given in, e.g., the Hugging Face model card or elsewhere.  In that case you have two options:
+However, in some cases, you need to add a new prompt structure because the model does not conform at all (or exactly enough) to the template given in, e.g., the Hugging Face model card or elsewhere.  In that case, you have two options:
 
 * **Option 1**: Use custom prompt
 
-    In CLI you can pass `--prompt_type=custom --prompt_dict="{....}"` for some dict {....}.  The dictionary doesn't need to contain all the things mentioned below, but should contain primary ones.
+    In CLI you can pass `--prompt_type=custom --prompt_dict="{....}"` for some dict {....}.  The dictionary doesn't need to contain all of the keys mentioned below, but should contain the primary ones.
 
     You can also choose `prompt_type=custom` in expert settings and change `prompt_dict` in the UI under `Models tab`.  Not all of these dictionary keys need to be set:
     ```
@@ -79,20 +237,18 @@ However, in some cases, you need to add a new prompt structure because the model
     ```
     i.e. see how consumed:  https://github.com/h2oai/h2ogpt/blob/a51576cd174e9fda61f00c3889a26888a604172c/src/prompter.py#L130-L142
 
-    The ones that are most crucial are:
+    The following are the most crucial items:
     ```
     PreInstruct
     PreResponse
     humanstr
     botstr
     ```
-    and often `humanstr` just equals `PreInstruct` and `botstr` just equals `PreResponse`.
-
-    If so, then really only have to set 2 things.
+    Note that it is often the case that `humanstr` equals `PreInstruct` and `botstr` equals `PreResponse`. If this is the case, then you only have to set two keys.
 
 * **Option 2**: Tweak or Edit code
 
-   You can change the code itself if that seems easier than using CLI or UI.  For that case you'd do:
+   The following steps describe how you can edit the code itself if you don't want to use the CLI or UI:
 
    1) In `prompter.py`, add new key (`prompt_type` name) and value (model name) into `prompt_type_to_model_name`
    2) In `enums.py`, add a new name and value for the new `prompt_type`
@@ -126,22 +282,31 @@ However, in some cases, you need to add a new prompt structure because the model
     ```
     You can start by changing each thing that appears in the model card that tells about the prompting.  You can always ask for help in a GitHub issue or Discord.
 
-In either case, if the model card doesn't have that information, you'll need to ask around.  Sometimes, prompt information will be in their pipeline file or in a GitHub repository associated with the model with training of inference code.  Or sometimes the model builds upon another, and you should look at the original model card.  You can also  ask in the community section on Hugging Face for that model card.
+In either case, if the model card doesn't have that information, you'll need to ask around. In some cases, prompt information is included in their pipeline file or in a GitHub repository associated with the model with training of inference code. It may also be the case that the model builds upon another, and you should look at the original model card.  You can also  ask in the community section on Hugging Face for that model card.
 
 ### Add new Embedding Model
 
-The option `--use_openai_embedding` set to `True` or `False` controls whether use OpenAI embedding, `--hf_embedding_model` set to some HuggingFace model name sets that as embedding model if not using OpenAI.  The setting `--migrate_embedding_model` as `True` or `False` chooses whether to migrate to new chosen embeddings or stick with existing/original embedding for a given database.  The option `--cut_distance` as float chooses the distance above which to avoid using document sources.  The default is 1.64, tuned for  Mini and instructor-large.  One can pass `--cut_distance=100000` to avoid any filter.  E.g.
-```bash
-python generate.py --base_model=h2oai/h2ogpt-4096-llama2-13b-chat  --score_model=None --langchain_mode='UserData' --user_path=user_path --use_auth_token=True --hf_embedding_model=BAAI/bge-large-en --cut_distance=1000000
-```
+This section describes how to add a new embedding model.
+
+- The `--use_openai_embedding` option set to `True` or `False` controls whether to use OpenAI embedding.
+
+- `--hf_embedding_model` set to some HuggingFace model name sets that as embedding model if not using OpenAI
+
+- The setting `--migrate_embedding_model` set to `True` or `False` specifies whether to migrate to new chosen embeddings or stick with existing/original embedding for a given database
+
+- The option `--cut_distance` as float specifies the distance above which to avoid using document sources.  The default is 1.64, tuned for  Mini and instructor-large. You can pass `--cut_distance=100000` to avoid any filter. For example:
+
+  ```bash
+  python generate.py --base_model=h2oai/h2ogpt-4096-llama2-13b-chat  --score_model=None --langchain_mode='UserData' --user_path=user_path --use_auth_token=True --hf_embedding_model=BAAI/bge-large-en --cut_distance=1000000
+  ```
 
 ### In-Context learning via Prompt Engineering
 
-For arbitrary tasks, good to use uncensored models like [Falcon 40 GM](https://huggingface.co/h2oai/h2ogpt-gm-oasst1-en-2048-falcon-40b-v2).  If censored is ok, then [LLama-2 Chat](https://huggingface.co/h2oai/h2ogpt-4096-llama2-70b-chat) are ok. Choose model size according to your system specs.
+For arbitrary tasks, using uncensored models like [Falcon 40 GM](https://huggingface.co/h2oai/h2ogpt-gm-oasst1-en-2048-falcon-40b-v2) is recommended. If censored is ok, then [LLama-2 Chat](https://huggingface.co/h2oai/h2ogpt-4096-llama2-70b-chat) are ok. Choose model size according to your system specs.
 
-For the UI, CLI, or EVAL this means editing the `System Pre-Context` text box in expert settings.  When starting h2oGPT, one can pass `--system_prompt` to give a model a system prompt if it supports that, `--context` to pre-append some raw context, `--chat_conversation` to pre-append a conversation for instruct/chat models, `--text_context_list` to fill context up to possible allowed `max_seq_len` with strings, with first most relevant to appear near prompt, or `--iinput` for a default input (to instruction for pure instruct models) choice.
+For the UI, CLI, or EVAL, this means editing the `System Pre-Context` text box in expert settings.  When starting h2oGPT, you can pass `--system_prompt` to give a model a system prompt if it supports that, `--context` to pre-append some raw context, `--chat_conversation` to pre-append a conversation for instruct/chat models, `--text_context_list` to fill context up to possible allowed `max_seq_len` with strings, with first most relevant to appear near prompt, or `--iinput` for a default input (to instruction for pure instruct models) choice.
 
-Or for API, passing `context` variable.  This can be filled with arbitrary things, including actual conversations to prime the model, although if a conversation then need to put in prompts like:
+Or for API, you can pass the `context` variable. This can be filled with arbitrary things, including actual conversations to prime the model, although if a conversation then you need to put in prompts as follows:
 ```python
 from gradio_client import Client
 import ast
@@ -162,11 +327,11 @@ res = client.predict(str(dict(kwargs)), api_name='/submit_nochat_api')
 response = ast.literal_eval(res)['response']
 print(response)
 ```
-See for example: https://github.com/h2oai/h2ogpt/blob/d3334233ca6de6a778707feadcadfef4249240ad/tests/test_prompter.py#L47 .
+For example, see: https://github.com/h2oai/h2ogpt/blob/d3334233ca6de6a778707feadcadfef4249240ad/tests/test_prompter.py#L47 .
 
 Note that even if the prompting is not perfect or matches the model, smarter models will still do quite well, as long as you give their answers as part of context.
 
-If just wanting to pre-append a conversation, then use `chat_conversation` instead and h2oGPT will generate the context for the given instruct/chat model:
+If you just want to pre-append a conversation, then use `chat_conversation` instead and h2oGPT will generate the context for the given instruct/chat model:
 ```python
 from gradio_client import Client
 import ast
@@ -185,7 +350,7 @@ response = ast.literal_eval(res)['response']
 print(response)
 ```
 
-Note that if give `context` and `chat_conversation` and `text_context_list`, then `context` is put first, then `chat_conversation`, then `text_context_list` as part of document Q/A prompting.  A `system_prompt` can also be passed, which can overpower any `context` or `chat_conversation` depending upon details.
+Note that when providing `context`, `chat_conversation`, and `text_context_list`, the order in which they are integrated into the document Q/A prompting is: `context` first, followed by `chat_conversation`, and finally `text_context_list`. A `system_prompt` can also be passed, which can overpower any `context` or `chat_conversation` depending upon details.
 
 ### Token access to Hugging Face models:
 
@@ -217,6 +382,12 @@ which uses good but smaller base model, embedding model, and no response score m
 python generate.py --base_model=h2oai/h2ogpt-gm-oasst1-en-2048-falcon-7b-v3 --hf_embedding_model=sentence-transformers/all-MiniLM-L6-v2 --score_model=None --load_4bit=True --langchain_mode='UserData'
 ```
 This uses 5800MB to startup, then soon drops to 5075MB after torch cache is cleared. Asking a simple question uses up to 6050MB. Adding a document uses no more new GPU memory.  Asking a question uses up to 6312MB for a few chunks (default), then drops back down to 5600MB.
+
+For some models, you can restrict the use of context to use less memory.  This does not work for long context models trained with static/linear RoPE scaling, for which the full static scaling should be used.  Otherwise, e.g. for LLaMa-2 you can use
+```bash
+python generate.py --base_model='llama' --prompt_type=llama2 --score_model=None --langchain_mode='UserData' --user_path=user_path --model_path_llama=https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML/resolve/main/llama-2-7b-chat.ggmlv3.q8_0.bin --max_seq_len=2048
+```
+even though normal value is `--max_seq_len=4096` if the option is not passed as inferred from the model `config.json`.
 
 On CPU case, a good model that's still low memory is to run:
 ```bash

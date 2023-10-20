@@ -161,6 +161,24 @@ User: Go to the market?
 Falcon:"""
 
 
+prompt_xwin = """A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: Hello! ASSISTANT: Hi!</s>USER: How are you? ASSISTANT: I'm good</s>USER: Go to the market? ASSISTANT:"""
+
+
+def get_mistral_prompt_with_context():
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.1")
+    messages = [
+        {"role": "user", "content": "Hello!"},
+        {"role": "assistant", "content": "Hi!"},
+        {"role": "user", "content": "How are you?"},
+        {"role": "assistant", "content": "I'm good"},
+        {"role": "user", "content": "Go to the market?"},
+    ]
+
+    prompt_mistral = tokenizer.apply_chat_template(messages, tokenize=False)
+    return prompt_mistral
+
+
 @wrap_test_forked
 @pytest.mark.parametrize("prompt_type,system_prompt,chat_conversation,expected",
                          [
@@ -179,6 +197,8 @@ Falcon:"""
                              ('beluga', 'auto', None, prompt_beluga_sys),
                              ('falcon_chat', '', None, prompt_falcon180),
                              ('falcon_chat', 'auto', None, prompt_falcon180_sys),
+                             ('mistral', '', None, get_mistral_prompt_with_context()),
+                             ('xwin', '', None, prompt_xwin),
                          ]
                          )
 def test_prompt_with_context(prompt_type, system_prompt, chat_conversation, expected):
@@ -188,7 +208,7 @@ def test_prompt_with_context(prompt_type, system_prompt, chat_conversation, expe
     chat = True
     model_max_length = 2048
     memory_restriction_level = 0
-    keep_sources_in_context1 = False
+    keep_sources_in_context = False
     iinput = ''
     stream_output = False
     debug = False
@@ -203,12 +223,17 @@ def test_prompt_with_context(prompt_type, system_prompt, chat_conversation, expe
                ]
     print("duration1: %s %s" % (prompt_type, time.time() - t0), flush=True)
     t0 = time.time()
-    context = history_to_context(history, langchain_mode,
-                                 add_chat_history_to_context,
-                                 prompt_type, prompt_dict, chat,
-                                 model_max_length, memory_restriction_level,
-                                 keep_sources_in_context1,
-                                 system_prompt, chat_conversation)
+    context = history_to_context(history,
+                                 langchain_mode=langchain_mode,
+                                 add_chat_history_to_context=add_chat_history_to_context,
+                                 prompt_type=prompt_type,
+                                 prompt_dict=prompt_dict,
+                                 chat=chat,
+                                 model_max_length=model_max_length,
+                                 memory_restriction_level=memory_restriction_level,
+                                 keep_sources_in_context=keep_sources_in_context,
+                                 system_prompt=system_prompt,
+                                 chat_conversation=chat_conversation)
     print("duration2: %s %s" % (prompt_type, time.time() - t0), flush=True)
     t0 = time.time()
     instruction = history[-1][0]
@@ -293,6 +318,20 @@ User: Go to the market?
 Falcon:"""
 
 
+prompt_xwin1 = """A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: Go to the market? ASSISTANT:"""
+
+
+def get_mistral_prompt():
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.1")
+    messages = [
+        {"role": "user", "content": "Go to the market?"},
+    ]
+
+    prompt_mistral = tokenizer.apply_chat_template(messages, tokenize=False)
+    return prompt_mistral
+
+
 @pytest.mark.parametrize("prompt_type,system_prompt,expected",
                          [
                              ('vicuna11', '', prompt_fastchat1),
@@ -308,6 +347,8 @@ Falcon:"""
                              ('beluga', 'auto', prompt_beluga1_sys),
                              ('falcon_chat', '', prompt_falcon1801),
                              ('falcon_chat', 'auto', prompt_falcon1801_sys),
+                             ('mistral', '', get_mistral_prompt()),
+                             ('xwin', '', prompt_xwin1),
                          ]
                          )
 @wrap_test_forked

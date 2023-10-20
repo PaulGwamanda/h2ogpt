@@ -2,7 +2,7 @@ import pandas as pd
 import pytest
 
 from tests.utils import wrap_test_forked
-from src.enums import DocumentSubset, LangChainAction
+from src.enums import DocumentSubset, LangChainAction, docs_joiner_default
 from src.utils import remove
 
 
@@ -71,14 +71,15 @@ def run_eval1(cpu=False, bits=None, base_model='h2oai/h2ogpt-oig-oasst1-512-6_9b
     from src.gen import main
     kwargs = dict(
         stream_output=False, prompt_type=prompt_type, prompt_dict='',
-        temperature=0.4, top_p=0.85, top_k=70, num_beams=1, max_new_tokens=256,
+        temperature=0.4, top_p=0.85, top_k=70, penalty_alpha=0.0, num_beams=1, max_new_tokens=256,
         min_new_tokens=0, early_stopping=False, max_time=180, repetition_penalty=1.07,
         num_return_sequences=1, do_sample=True, chat=False,
         langchain_mode='Disabled', add_chat_history_to_context=True,
+        add_search_to_context=False,
         langchain_action=LangChainAction.QUERY.value, langchain_agents=[],
         chunk=True, chunk_size=512,
         load_half=False, load_4bit=False, load_8bit=False,
-        load_gptq=False, load_exllama=False, use_safetensors=False,
+        load_gptq='', load_awq='', load_exllama=False, use_safetensors=False,
     )
     if bits == 4:
         kwargs['load_4bit'] = True
@@ -88,7 +89,8 @@ def run_eval1(cpu=False, bits=None, base_model='h2oai/h2ogpt-oig-oasst1-512-6_9b
         kwargs['load_half'] = True
     elif bits == 32:
         pass
-    kwargs['load_gptq'] = False
+    kwargs['load_gptq'] = ''
+    kwargs['load_awq'] = ''
     kwargs['load_exllama'] = False
     kwargs['use_safetensors'] = False
     eval_out_filename = main(base_model=base_model,
@@ -132,6 +134,11 @@ def run_eval1(cpu=False, bits=None, base_model='h2oai/h2ogpt-oig-oasst1-512-6_9b
                  'h2ogpt_key': None,
                  'chat_conversation': None,
                  'text_context_list': None,
+                 'docs_ordering_type': 'reverse_ucurve_sort',
+                 'min_max_new_tokens': 256,
+                 'max_input_tokens': -1,
+                 'docs_token_handling': None,
+                 'docs_joiner': docs_joiner_default,
                  }
     if cpu and bits == 32:
         expected1.update({'image_loaders': np.array([], dtype=object)})
@@ -139,7 +146,7 @@ def run_eval1(cpu=False, bits=None, base_model='h2oai/h2ogpt-oig-oasst1-512-6_9b
         expected1.update({'image_loaders': np.array(['Caption'], dtype=object)})
 
     expected1.update({k: v for k, v in kwargs.items() if
-                      k not in ['load_half', 'load_4bit', 'load_8bit', 'load_gptq', 'load_exllama', 'use_safetensors']})
+                      k not in ['load_half', 'load_4bit', 'load_8bit', 'load_gptq', 'load_awq', 'load_exllama', 'use_safetensors']})
     drop_keys = ['document_choice', 'langchain_agents', 'image_loaders']  # some numpy things annoying to match
     expected1 = {k: v for k, v in expected1.items() if k not in drop_keys}
     actual1 = {k: v for k, v in actual1.items() if k not in drop_keys}

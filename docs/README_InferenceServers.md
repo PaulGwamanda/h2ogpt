@@ -229,11 +229,14 @@ then ensure openai global key/base are not changed in race if used together:
 cd $HOME/miniconda3/envs/h2ogpt/lib/python3.10/site-packages/
 rm -rf openai_vllm*
 cp -a openai openai_vllm
-cp -a openai-0.27.8.dist-info openai_vllm-0.27.8.dist-info
+file0=`ls|grep openai|grep dist-info`
+file1=`echo $file0|sed 's/openai-/openai_vllm-/g'`
+cp -a $file0 $file1
 find openai_vllm -name '*.py' | xargs sed -i 's/from openai /from openai_vllm /g'
 find openai_vllm -name '*.py' | xargs sed -i 's/openai\./openai_vllm./g'
 find openai_vllm -name '*.py' | xargs sed -i 's/from openai\./from openai_vllm./g'
 find openai_vllm -name '*.py' | xargs sed -i 's/import openai/import openai_vllm/g'
+find openai_vllm -name '*.py' | xargs sed -i 's/OpenAI/vLLM/g'
 ```
 
 Assuming torch was installed with CUDA 11.7, and you have installed cuda locally in `/usr/local/cuda-11.7`, then can start in OpenAI compliant mode.  E.g. for LLaMa 65B on 2*A100 GPUs:
@@ -277,10 +280,11 @@ output = llm.generate("San Franciso is a")
 See [vLLM docs](https://vllm.readthedocs.io/en/latest/getting_started/quickstart.html).
 ```text
 (h2ollm) ubuntu@cloudvm:~/h2ogpt$ python -m vllm.entrypoints.openai.api_server --help
-usage: api_server.py [-h] [--host HOST] [--port PORT] [--allow-credentials] [--allowed-origins ALLOWED_ORIGINS] [--allowed-methods ALLOWED_METHODS] [--allowed-headers ALLOWED_HEADERS] [--served-model-name SERVED_MODEL_NAME] [--model MODEL] [--tokenizer TOKENIZER]
-                     [--tokenizer-mode {auto,slow}] [--download-dir DOWNLOAD_DIR] [--use-np-weights] [--use-dummy-weights] [--dtype {auto,half,bfloat16,float}] [--worker-use-ray] [--pipeline-parallel-size PIPELINE_PARALLEL_SIZE]
-                     [--tensor-parallel-size TENSOR_PARALLEL_SIZE] [--block-size {8,16,32}] [--seed SEED] [--swap-space SWAP_SPACE] [--gpu-memory-utilization GPU_MEMORY_UTILIZATION] [--max-num-batched-tokens MAX_NUM_BATCHED_TOKENS] [--max-num-seqs MAX_NUM_SEQS]
-                     [--disable-log-stats] [--engine-use-ray] [--disable-log-requests]
+usage: api_server.py [-h] [--host HOST] [--port PORT] [--allow-credentials] [--allowed-origins ALLOWED_ORIGINS] [--allowed-methods ALLOWED_METHODS] [--allowed-headers ALLOWED_HEADERS] [--served-model-name SERVED_MODEL_NAME] [--model MODEL]
+                     [--tokenizer TOKENIZER] [--revision REVISION] [--tokenizer-mode {auto,slow}] [--trust-remote-code] [--download-dir DOWNLOAD_DIR] [--load-format {auto,pt,safetensors,npcache,dummy}]
+                     [--dtype {auto,half,float16,bfloat16,float,float32}] [--max-model-len MAX_MODEL_LEN] [--worker-use-ray] [--pipeline-parallel-size PIPELINE_PARALLEL_SIZE] [--tensor-parallel-size TENSOR_PARALLEL_SIZE] [--block-size {8,16,32}]
+                     [--seed SEED] [--swap-space SWAP_SPACE] [--gpu-memory-utilization GPU_MEMORY_UTILIZATION] [--max-num-batched-tokens MAX_NUM_BATCHED_TOKENS] [--max-num-seqs MAX_NUM_SEQS] [--disable-log-stats] [--quantization {awq,None}]
+                     [--engine-use-ray] [--disable-log-requests] [--max-log-len MAX_LOG_LEN]
 
 vLLM OpenAI-Compatible RESTful API server.
 
@@ -300,14 +304,20 @@ options:
   --model MODEL         name or path of the huggingface model to use
   --tokenizer TOKENIZER
                         name or path of the huggingface tokenizer to use
+  --revision REVISION   the specific model version to use. It can be a branch name, a tag name, or a commit id. If unspecified, will use the default version.
   --tokenizer-mode {auto,slow}
                         tokenizer mode. "auto" will use the fast tokenizer if available, and "slow" will always use the slow tokenizer.
+  --trust-remote-code   trust remote code from huggingface
   --download-dir DOWNLOAD_DIR
                         directory to download and load the weights, default to the default cache dir of huggingface
-  --use-np-weights      save a numpy copy of model weights for faster loading. This can increase the disk usage by up to 2x.
-  --use-dummy-weights   use dummy values for model weights
-  --dtype {auto,half,bfloat16,float}
+  --load-format {auto,pt,safetensors,npcache,dummy}
+                        The format of the model weights to load. "auto" will try to load the weights in the safetensors format and fall back to the pytorch bin format if safetensors format is not available. "pt" will load the weights in the pytorch
+                        bin format. "safetensors" will load the weights in the safetensors format. "npcache" will load the weights in pytorch format and store a numpy cache to speed up the loading. "dummy" will initialize the weights with random
+                        values, which is mainly for profiling.
+  --dtype {auto,half,float16,bfloat16,float,float32}
                         data type for model weights and activations. The "auto" option will use FP16 precision for FP32 and FP16 models, and BF16 precision for BF16 models.
+  --max-model-len MAX_MODEL_LEN
+                        model context length. If unspecified, will be automatically derived from the model.
   --worker-use-ray      use Ray for distributed serving, will be automatically set when using more than 1 GPU
   --pipeline-parallel-size PIPELINE_PARALLEL_SIZE, -pp PIPELINE_PARALLEL_SIZE
                         number of pipeline stages
@@ -325,9 +335,13 @@ options:
   --max-num-seqs MAX_NUM_SEQS
                         maximum number of sequences per iteration
   --disable-log-stats   disable logging statistics
+  --quantization {awq,None}, -q {awq,None}
+                        Method used to quantize the weights
   --engine-use-ray      use Ray to start the LLM engine in a separate process as the server process.
   --disable-log-requests
                         disable logging requests
+  --max-log-len MAX_LOG_LEN
+                        max number of prompt characters or prompt ID numbers being printed in log. Default: unlimited.
 ```
 
 CURL test:
@@ -346,7 +360,7 @@ If started OpenAI-compliant server, then run h2oGPT:
 ```bash
 python generate.py --inference_server="vllm:0.0.0.0:5000" --base_model=h2oai/h2ogpt-oasst1-falcon-40b --langchain_mode=UserData
 ```
-Note: `vllm_chat` ChatCompletion is not supported by vLLM project.  Do not add `https://` or `http://` as prefix to IP address for vLLM.
+Note: `vllm_chat` ChatCompletion is not supported by vLLM project.  If add `https://` or `http://` as prefix to IP address for vLLM, then also need to add rest of full address with `/v1` at end
 
 Note vLLM has bug in stopping sequence that is does not return the last token, unlike OpenAI, so a hack is in place for `prompt_type=human_bot`, and other prompts may need similar hacks.  See `fix_text()` in `src/prompter.py`.
 
@@ -436,6 +450,14 @@ sleep 60
 python generate.py --model_lock="[{'inference_server':'http://192.168.1.xx:5000','base_model':'h2oai/h2ogpt-gm-oasst1-en-2048-open-llama-13b'},{'inference_server':'openai_chat','base_model':'gpt-3.5-turbo'}]" --model_lock_columns=2
 ```
 where be sure to replace `192.168.1.xx` with your IP address.  Note the ampersand so the first call is in background.  The sleep gives time for the first one to come up.  The above is as if ran on single system, but you can run on any other system separate generates of any number.
+
+### Visible Models
+
+At startup, models can be selected as visible out of all those in the model lock, e.g.:
+```
+export vis="['h2oai/h2ogpt-4096-llama2-70b-chat','h2oai/h2ogpt-4096-llama2-13b-chat','HuggingFaceH4/zephyr-7b-alpha','gpt-3.5-turbo-0613']"
+python generate.py --save_dir=saveall_gpt --model_lock="$MODEL_LOCK" --model_lock_columns=3 --auth_filename=all_auth.json --gradio_size=small --height=400 --score_model=None --max_max_new_tokens=2048 --max_new_tokens=1024 --visible_models="$vis" &>> logs.all.gradio_chat.txt &
+```
 
 ### System info from gradio server
 

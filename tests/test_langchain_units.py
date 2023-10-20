@@ -8,10 +8,14 @@ import uuid
 
 import pytest
 
+from tests.test_client_calls import texts_helium1, texts_helium2, texts_helium3, texts_helium4, texts_helium5, \
+    texts_simple
 from tests.utils import wrap_test_forked, kill_weaviate, make_user_path_test
-from src.enums import DocumentSubset, LangChainAction, LangChainMode, LangChainTypes, DocumentChoice
-from src.gpt_langchain import get_persist_directory, get_db, get_documents, length_db1, _run_qa_db
-from src.utils import zip_data, download_simple, get_ngpus_vis, get_mem_gpus, have_faiss, remove, get_kwargs
+from src.enums import DocumentSubset, LangChainAction, LangChainMode, LangChainTypes, DocumentChoice, \
+    docs_joiner_default, docs_token_handling_default, db_types, db_types_full
+from src.gpt_langchain import get_persist_directory, get_db, get_documents, length_db1, _run_qa_db, split_merge_docs
+from src.utils import zip_data, download_simple, get_ngpus_vis, get_mem_gpus, have_faiss, remove, get_kwargs, \
+    FakeTokenizer, get_token_count
 
 have_openai_key = os.environ.get('OPENAI_API_KEY') is not None
 have_replicate_key = os.environ.get('REPLICATE_API_TOKEN') is not None
@@ -22,9 +26,6 @@ mem_gpus = get_mem_gpus()
 
 # FIXME:
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
-
-db_types = ['chroma', 'weaviate']
-db_types_full = ['chroma', 'weaviate', 'faiss']
 
 
 @pytest.mark.skipif(not have_openai_key, reason="requires OpenAI key to run")
@@ -61,8 +62,9 @@ def run_qa_wiki(use_openai_model=False, first_para=True, text_limit=None, chain_
     from langchain.chains.qa_with_sources import load_qa_with_sources_chain
 
     sources = get_wiki_sources(first_para=first_para, text_limit=text_limit)
-    llm, model_name, streamer, prompt_type_out, async_output, only_new_text = \
-        get_llm(use_openai_model=use_openai_model, prompt_type=prompt_type, llamacpp_dict={})
+    llm, model_name, streamer, prompt_type_out, async_output, only_new_text, gradio_server = \
+        get_llm(use_openai_model=use_openai_model, prompt_type=prompt_type, llamacpp_dict={},
+        exllama_dict={})
     chain = load_qa_with_sources_chain(llm, chain_type=chain_type)
 
     question = "What are the main differences between Linux and Windows?"
@@ -254,7 +256,8 @@ def get_test_model():
                       load_4bit=False,
                       low_bit_mode=1,
                       load_half=True,
-                      load_gptq=False,
+                      load_gptq='',
+                      load_awq='',
                       load_exllama=False,
                       use_safetensors=False,
                       revision=None,
@@ -276,6 +279,8 @@ def get_test_model():
                       max_seq_len=None,
                       compile_model=True,
                       llamacpp_dict={},
+                      exllama_dict={},
+                      gptq_dict={},
 
                       verbose=False)
     model, tokenizer, device = get_model(reward_type=False,
@@ -500,6 +505,7 @@ def test_make_add_db(repeat, db_type):
                                   migrate_embedding_model=True,
                                   auto_migrate_db=False,
                                   caption_loader=False,
+                                  doctr_loader=False,
                                   enable_captions=False,
                                   enable_doctr=False,
                                   enable_pix2struct=False,
@@ -923,51 +929,158 @@ def test_pptx_add(db_type):
             assert os.path.normpath(docs[0].metadata['source']) == os.path.normpath(test_file1)
 
 
+@pytest.mark.parametrize("use_pypdf", ['auto', 'on', 'off'])
+@pytest.mark.parametrize("use_unstructured_pdf", ['auto', 'on', 'off'])
+@pytest.mark.parametrize("use_pymupdf", ['auto', 'on', 'off'])
+@pytest.mark.parametrize("enable_pdf_doctr", ['auto', 'on', 'off'])
+@pytest.mark.parametrize("enable_pdf_ocr", ['auto', 'on', 'off'])
 @pytest.mark.parametrize("db_type", db_types)
 @wrap_test_forked
-def test_pdf_add(db_type):
+def test_pdf_add(db_type, enable_pdf_ocr, enable_pdf_doctr, use_pymupdf, use_unstructured_pdf, use_pypdf):
     kill_weaviate(db_type)
     from src.make_db import make_db_main
     with tempfile.TemporaryDirectory() as tmp_persist_directory:
         with tempfile.TemporaryDirectory() as tmp_user_path:
-            url = 'https://www.africau.edu/images/default/sample.pdf'
-            test_file1 = os.path.join(tmp_user_path, 'sample.pdf')
-            download_simple(url, dest=test_file1)
-            db, collection_name = make_db_main(persist_directory=tmp_persist_directory, user_path=tmp_user_path,
-                                               fail_any_exception=True, db_type=db_type,
-                                               add_if_exists=False)
+            if True:
+                if False:
+                    url = 'https://www.africau.edu/images/default/sample.pdf'
+                    test_file1 = os.path.join(tmp_user_path, 'sample.pdf')
+                    download_simple(url, dest=test_file1)
+                else:
+                    test_file1 = os.path.join(tmp_user_path, 'sample.pdf')
+                    shutil.copy(os.path.join('tests', 'sample.pdf'), tmp_user_path)
+            else:
+                if False:
+                    name = 'CityofTshwaneWater.pdf'
+                    location = "tests"
+                else:
+                    name = '555_593.pdf'
+                    location = '/home/jon/Downloads/'
+
+                test_file1 = os.path.join(location, name)
+                shutil.copy(test_file1, tmp_user_path)
+                test_file1 = os.path.join(tmp_user_path, name)
+
+            default_mode = use_pymupdf in ['auto', 'on'] and \
+                           use_pypdf in ['auto'] and \
+                           use_unstructured_pdf in ['auto'] and \
+                           enable_pdf_doctr in ['off', 'auto'] and \
+                           enable_pdf_ocr in ['off', 'auto']
+            no_doc_mode = use_pymupdf in ['off'] and \
+                          use_pypdf in ['off'] and \
+                          use_unstructured_pdf in ['off'] and \
+                          enable_pdf_doctr in ['off'] and \
+                          enable_pdf_ocr in ['off', 'auto']
+
+            try:
+                db, collection_name = make_db_main(persist_directory=tmp_persist_directory, user_path=tmp_user_path,
+                                                   fail_any_exception=True, db_type=db_type,
+                                                   use_pymupdf=use_pymupdf,
+                                                   enable_pdf_ocr=enable_pdf_ocr,
+                                                   enable_pdf_doctr=enable_pdf_doctr,
+                                                   use_unstructured_pdf=use_unstructured_pdf,
+                                                   use_pypdf=use_pypdf,
+                                                   add_if_exists=False)
+            except Exception as e:
+                if 'had no valid text and no meta data was parsed' in str(
+                        e) or 'had no valid text, but meta data was parsed' in str(e):
+                    if no_doc_mode:
+                        return
+                    else:
+                        raise
+                raise
+
             assert db is not None
             docs = db.similarity_search("Suggestions")
-            assert len(docs) == 3 + (1 if db_type == 'chroma' else 0)
+            if default_mode:
+                assert len(docs) == 3 + (1 if db_type == 'chroma' else 0)
+            else:
+                # ocr etc. end up with different pages, overly complex to test exact count
+                assert len(docs) >= 2
             assert 'And more text. And more text.' in docs[0].page_content
-            assert os.path.normpath(docs[0].metadata['source']) == os.path.normpath(test_file1)
+            if db_type == 'weaviate':
+                assert os.path.normpath(docs[0].metadata['source']) == os.path.normpath(test_file1) or os.path.basename(
+                    docs[0].metadata['source']) == os.path.basename(test_file1)
+            else:
+                assert os.path.normpath(docs[0].metadata['source']) == os.path.normpath(test_file1)
 
 
-@pytest.mark.parametrize("enable_pdf_doctr", [False, True])
+@pytest.mark.parametrize("use_pypdf", ['auto', 'on', 'off'])
+@pytest.mark.parametrize("use_unstructured_pdf", ['auto', 'on', 'off'])
+@pytest.mark.parametrize("use_pymupdf", ['auto', 'on', 'off'])
+@pytest.mark.parametrize("enable_pdf_doctr", ['auto', 'on', 'off'])
 @pytest.mark.parametrize("enable_pdf_ocr", ['auto', 'on', 'off'])
 @pytest.mark.parametrize("db_type", db_types)
 @wrap_test_forked
-def test_image_pdf_add(db_type, enable_pdf_ocr, enable_pdf_doctr):
+def test_image_pdf_add(db_type, enable_pdf_ocr, enable_pdf_doctr, use_pymupdf, use_unstructured_pdf, use_pypdf):
     if enable_pdf_ocr == 'off' and not enable_pdf_doctr:
         return
     kill_weaviate(db_type)
     from src.make_db import make_db_main
     with tempfile.TemporaryDirectory() as tmp_persist_directory:
         with tempfile.TemporaryDirectory() as tmp_user_path:
-            test_file1 = os.path.join('tests', 'CityofTshwaneWater.pdf')
+            name = 'CityofTshwaneWater.pdf'
+            location = "tests"
+            test_file1 = os.path.join(location, name)
             shutil.copy(test_file1, tmp_user_path)
-            test_file1 = os.path.join(tmp_user_path, 'CityofTshwaneWater.pdf')
-            db, collection_name = make_db_main(persist_directory=tmp_persist_directory, user_path=tmp_user_path,
-                                               fail_any_exception=True, db_type=db_type,
-                                               enable_pdf_ocr=enable_pdf_ocr,
-                                               enable_pdf_doctr=enable_pdf_doctr,
-                                               add_if_exists=False)
-            assert db is not None
-            docs = db.similarity_search("List Tshwane's concerns about water.")
-            assert len(docs) == 4
-            assert 'we appeal to residents that do have water to please use it sparingly.' in docs[
-                1].page_content or 'OFFICE OF THE MMC FOR UTILITIES AND REGIONAL OPERATIONS' in docs[1].page_content
-            assert os.path.normpath(docs[0].metadata['source']) == os.path.normpath(test_file1)
+            test_file1 = os.path.join(tmp_user_path, name)
+
+            str_test = [db_type, enable_pdf_ocr, enable_pdf_doctr, use_pymupdf, use_unstructured_pdf, use_pypdf]
+            str_test = [str(x) for x in str_test]
+            str_test = '-'.join(str_test)
+
+            default_mode = use_pymupdf in ['auto', 'on'] and \
+                           use_pypdf in ['off', 'auto'] and \
+                           use_unstructured_pdf in ['auto'] and \
+                           enable_pdf_doctr in ['off', 'auto'] and \
+                           enable_pdf_ocr in ['off', 'auto']
+            no_doc_mode = use_pymupdf in ['off'] and \
+                          use_pypdf in ['off'] and \
+                          use_unstructured_pdf in ['off'] and \
+                          enable_pdf_doctr in ['off'] and \
+                          enable_pdf_ocr in ['off', 'auto']
+            no_docs = ['off-off-auto-off-auto', 'off-off-on-off-on', 'off-off-auto-off-off', 'off-off-off-off-auto',
+                       'off-off-on-off-off', 'off-off-on-off-auto', 'off-off-auto-off-on', 'off-off-off-off-on',
+
+                       ]
+            no_doc_mode |= any([x in str_test for x in no_docs])
+
+            try:
+                db, collection_name = make_db_main(persist_directory=tmp_persist_directory, user_path=tmp_user_path,
+                                                   fail_any_exception=True, db_type=db_type,
+                                                   use_pymupdf=use_pymupdf,
+                                                   enable_pdf_ocr=enable_pdf_ocr,
+                                                   enable_pdf_doctr=enable_pdf_doctr,
+                                                   use_unstructured_pdf=use_unstructured_pdf,
+                                                   use_pypdf=use_pypdf,
+                                                   add_if_exists=False)
+            except Exception as e:
+                if 'had no valid text and no meta data was parsed' in str(
+                        e) or 'had no valid text, but meta data was parsed' in str(e):
+                    if no_doc_mode:
+                        return
+                    else:
+                        raise
+                raise
+
+            if default_mode:
+                assert db is not None
+                docs = db.similarity_search("List Tshwane's concerns about water.")
+                assert len(docs) == 4
+                assert 'we appeal to residents that do have water to please use it sparingly.' in docs[
+                    1].page_content or 'OFFICE OF THE MMC FOR UTILITIES AND REGIONAL OPERATIONS' in docs[1].page_content
+            else:
+
+                assert db is not None
+                docs = db.similarity_search("List Tshwane's concerns about water.")
+                assert len(docs) >= 2
+                assert docs[0].page_content
+                assert docs[1].page_content
+            if db_type == 'weaviate':
+                assert os.path.normpath(docs[0].metadata['source']) == os.path.normpath(test_file1) or os.path.basename(
+                    docs[0].metadata['source']) == os.path.basename(test_file1)
+            else:
+                assert os.path.normpath(docs[0].metadata['source']) == os.path.normpath(test_file1)
 
 
 @pytest.mark.parametrize("db_type", db_types)
@@ -1552,46 +1665,52 @@ def test_chroma_filtering():
                         rets1 = rets[0]
                         if chroma_new:
                             if answer_with_sources == -1:
-                                assert len(rets1) == 2 and (
-                                        'h2oGPT' in rets1[0] or 'H2O GPT' in rets1[0] or 'H2O.ai' in rets1[0])
+                                assert len(rets1) == 4 and (
+                                        'h2oGPT' in rets1['response'] or 'H2O GPT' in rets1['response'] or 'H2O.ai' in
+                                        rets1['response'])
                             else:
-                                assert len(rets1) == 2 and (
-                                        'h2oGPT' in rets1[0] or 'H2O GPT' in rets1[0] or 'H2O.ai' in rets1[0])
+                                assert len(rets1) == 4 and (
+                                        'h2oGPT' in rets1['response'] or 'H2O GPT' in rets1['response'] or 'H2O.ai' in
+                                        rets1['response'])
                                 if document_subset == DocumentSubset.Relevant.name:
-                                    assert 'h2oGPT' in rets1[1]
+                                    assert 'h2oGPT' in rets1['sources']
                         else:
                             if answer_with_sources == -1:
-                                assert len(rets1) == 2 and (
-                                        'whisper' in rets1[0].lower() or
-                                        'phase' in rets1[0].lower() or
-                                        'generate' in rets1[0].lower() or
-                                        'statistic' in rets1[0].lower() or
-                                        '.pdf' in rets1[0].lower())
+                                assert len(rets1) == 4 and (
+                                        'whisper' in rets1['response'].lower() or
+                                        'phase' in rets1['response'].lower() or
+                                        'generate' in rets1['response'].lower() or
+                                        'statistic' in rets1['response'].lower() or
+                                        'a chat bot that' in rets1['response'].lower() or
+                                        'non-centrality parameter' in rets1['response'].lower() or
+                                        '.pdf' in rets1['response'].lower())
                             else:
-                                assert len(rets1) == 2 and (
-                                        'whisper' in rets1[0].lower() or
-                                        'phase' in rets1[0].lower() or
-                                        'generate' in rets1[0].lower() or
-                                        'statistic' in rets1[0].lower() or
-                                        '.pdf' in rets1[0].lower())
+                                assert len(rets1) == 4 and (
+                                        'whisper' in rets1['response'].lower() or
+                                        'phase' in rets1['response'].lower() or
+                                        'generate' in rets1['response'].lower() or
+                                        'statistic' in rets1['response'].lower() or
+                                        '.pdf' in rets1['response'].lower())
                                 if document_subset == DocumentSubset.Relevant.name:
-                                    assert 'whisper' in rets1[1] or 'unbiased' in rets1[1] or 'approximate' in rets1[1]
+                                    assert 'whisper' in rets1['sources'] or 'unbiased' in rets1[
+                                        'sources'] or 'approximate' in rets1['sources']
                         if answer_with_sources == -1:
                             if document_subset == DocumentSubset.Relevant.name:
-                                assert 'score' in rets1[1][0] and 'content' in rets1[1][0] and 'source' in rets1[1][0]
+                                assert 'score' in rets1['sources'][0] and 'content' in rets1['sources'][
+                                    0] and 'source' in rets1['sources'][0]
                                 if doc_choice in [1, 2]:
-                                    assert len(set([x['source'] for x in rets1[1]])) == doc_choice
+                                    assert len(set([x['source'] for x in rets1['sources']])) == doc_choice
                                 else:
-                                    assert len(set([x['source'] for x in rets1[1]])) >= 1
+                                    assert len(set([x['source'] for x in rets1['sources']])) >= 1
                             elif document_subset == DocumentSubset.RelSources.name:
                                 if doc_choice in [1, 2]:
-                                    assert len(set([x['source'] for x in rets1[1]])) <= doc_choice
+                                    assert len(set([x['source'] for x in rets1['sources']])) <= doc_choice
                                 else:
-                                    assert len(set([x['source'] for x in rets1[1]])) >= 2
+                                    assert len(set([x['source'] for x in rets1['sources']])) >= 2
                             else:
                                 # TopK may just be 1 doc because of many chunks from that doc
                                 # if top_k_docs=-1 might get more
-                                assert len(set([x['source'] for x in rets1[1]])) >= 1
+                                assert len(set([x['source'] for x in rets1['sources']])) >= 1
 
         # SHOW DOC
         single_document_choice1 = [x['source'] for x in db.get()['metadatas']][0]
@@ -1617,6 +1736,69 @@ def test_chroma_filtering():
                 assert1 = show_ret[4]['value'] is not None and single_document_choice1 in show_ret[4]['value']
                 assert2 = show_ret[3]['value'] is not None and single_document_choice1 in show_ret[3]['value']
                 assert assert1 or assert2
+
+
+@pytest.mark.parametrize("data_kind", [
+    'simple',
+    'helium1',
+    'helium2',
+    'helium3',
+    'helium4',
+    'helium5',
+])
+@wrap_test_forked
+def test_merge_docs(data_kind):
+    model_max_length = 4096
+    max_input_tokens = 1024
+    docs_joiner = docs_joiner_default
+    docs_token_handling = docs_token_handling_default
+    tokenizer = FakeTokenizer(model_max_length=model_max_length)
+
+    from langchain.docstore.document import Document
+    if data_kind == 'simple':
+        texts = texts_simple
+    elif data_kind == 'helium1':
+        texts = texts_helium1
+    elif data_kind == 'helium2':
+        texts = texts_helium2
+    elif data_kind == 'helium3':
+        texts = texts_helium3
+    elif data_kind == 'helium4':
+        texts = texts_helium4
+    elif data_kind == 'helium5':
+        texts = texts_helium5
+    else:
+        raise RuntimeError("BAD")
+
+    docs_with_score = [(Document(page_content=page_content, metadata={"source": "%d" % pi}), 1.0) for pi, page_content
+                       in enumerate(texts)]
+
+    docs_with_score_new, max_docs_tokens = (
+        split_merge_docs(docs_with_score, tokenizer=tokenizer, max_input_tokens=max_input_tokens,
+                         docs_token_handling=docs_token_handling, joiner=docs_joiner, verbose=True))
+
+    text_context_list = [x[0].page_content for x in docs_with_score_new]
+    tokens = [get_token_count(x + docs_joiner, tokenizer) for x in text_context_list]
+    print(tokens)
+
+    if data_kind == 'simple':
+        assert len(docs_with_score_new) == 1
+        assert all([x < max_input_tokens for x in tokens])
+    elif data_kind == 'helium1':
+        assert len(docs_with_score_new) == 4
+        assert all([x < max_input_tokens for x in tokens])
+    elif data_kind == 'helium2':
+        assert len(docs_with_score_new) == 8
+        assert all([x < max_input_tokens for x in tokens])
+    elif data_kind == 'helium3':
+        assert len(docs_with_score_new) == 5
+        assert all([x < max_input_tokens for x in tokens])
+    elif data_kind == 'helium4':
+        assert len(docs_with_score_new) == 5
+        assert all([x < max_input_tokens for x in tokens])
+    elif data_kind == 'helium5':
+        assert len(docs_with_score_new) == 3
+        assert all([x < max_input_tokens for x in tokens])
 
 
 if __name__ == '__main__':

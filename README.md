@@ -7,19 +7,22 @@ Query and summarize your documents or just chat with local private GPT LLMs usin
 - **Private** offline database of any documents [(PDFs, Excel, Word, Images, Code, Text, MarkDown, etc.)](docs/README_LangChain.md#supported-datatypes)
   - **Persistent** database (Chroma, Weaviate, or in-memory FAISS) using accurate embeddings (instructor-large, all-MiniLM-L6-v2, etc.)
   - **Efficient** use of context using instruct-tuned LLMs (no need for LangChain's few-shot approach)
-  - **Parallel** summarization reaching 80 tokens/second output 13B LLaMa2
-- **Variety** of models supported (LLaMa2, Falcon, Vicuna, WizardLM including AutoGPTQ, 4-bit/8-bit, LORA)
+  - **Parallel** summarization and extraction, reaching an output of 80 tokens per second with the 13B LLaMa2 model
+- **Variety** of models supported (LLaMa2, Mistral, Falcon, Vicuna, WizardLM.  With AutoGPTQ, 4-bit/8-bit, LORA, etc.)
   - **GPU** support from HF and LLaMa.cpp GGML models, and **CPU** support using HF, LLaMa.cpp, and GPT4ALL models
+  - **Attention Sinks** for [arbitrarily long](https://github.com/tomaarsen/attention_sinks) generation (LLaMa-2, Mistral, MPT, Pythia, Falcon, etc.)
 - **UI** or CLI with streaming of all models
-  - **Upload** and **View** documents via UI (control multiple collaborative or personal collections)
+  - **Upload** and **View** documents through the UI (control multiple collaborative or personal collections)
   - **Bake-off** UI mode against many models at same time
-  - **Easy Download** of model artifacts and control over models like LLaMa.cpp via UI
-  - **Authentication** in UI by user/password
-  - **State Preservation** in UI by user/password
-- **Linux, Docker, MAC, and Windows** support
-  - **Easy Windows Installer** for Windows 10 64-bit
+  - **Easy Download** of model artifacts and control over models like LLaMa.cpp through the UI
+  - **Authentication** in the UI by user/password
+  - **State Preservation** in the UI by user/password
+- **Linux, Docker, macOS, and Windows** support
+  - [**Easy Windows Installer**](#windows-1011-64-bit-with-full-document-qa-capability) for Windows 10 64-bit
 - **Inference Servers** support (HF TGI server, vLLM, Gradio, ExLLaMa, Replicate, OpenAI, Azure OpenAI)
 - **OpenAI-compliant Python client API** for client-server control
+- **Web-Search** integration with Chat and Document Q/A
+- **Agents** for Search, Document Q/A, Python Code, CSV frames (Experimental, best with OpenAI currently)
 - **Evaluate** performance using reward models
 - **Quality** maintained with over 1000 unit and integration tests taking over 4 GPU-hours
 
@@ -38,24 +41,29 @@ cd h2ogpt
 pip install -r requirements.txt
 pip install -r reqs_optional/requirements_optional_langchain.txt
 pip install -r reqs_optional/requirements_optional_gpt4all.txt
-# if don't have wget, copy the below link to browser and download and place file into h2ogpt folder
-wget https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML/resolve/main/llama-2-7b-chat.ggmlv3.q8_0.bin
-python generate.py --base_model='llama' --prompt_type=llama2
+python generate.py --base_model='llama' --prompt_type=llama2 --model_path_llama=https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML/resolve/main/llama-2-7b-chat.ggmlv3.q8_0.bin --max_seq_len=4096
 ```
-then go to your browser by visiting [http://127.0.0.1:7860](http://127.0.0.1:7860) or [http://localhost:7860](http://localhost:7860).
-If encounter issues with llama-cpp-python or other packages that try to compile and fail, try binary wheels for your platform as linked in the detailed instructions below.
+then go to your browser by visiting [http://127.0.0.1:7860](http://127.0.0.1:7860) or [http://localhost:7860](http://localhost:7860).  Choose 13B for a better model than 7B.
+If you encounter issues with `llama-cpp-python` or other packages that try to compile and fail, try binary wheels for your platform as linked in the detailed instructions below.
+
+We recommend quantized (e.g. [GGML](https://github.com/rustformers/llm/blob/main/crates/ggml/README.md#ggml---large-language-models-for-everyone)) models for most small-GPU systems, e.g. [LLaMa-2-7B-Chat-GGML](https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML) for 9GB+ GPU memory or larger models like [LLaMa-2-13B-Chat-GGML](https://huggingface.co/TheBloke/Llama-2-13B-Chat-GGML) if you have 16GB+ GPU memory.
 
 ---
 
 #### Windows 10/11 64-bit with full document Q/A capability
   * One-click Installers
+    Oct 06, 2023:
+    * [h2oGPT GPU-CUDA Installer](https://h2o-release.s3.amazonaws.com/h2ogpt/Oct2023/h2oGPT_0.0.1_gpu.exe) (1.8GB file)
+    * [h2oGPT CPU Installer](https://h2o-release.s3.amazonaws.com/h2ogpt/Oct2023/h2oGPT_0.0.1_cpu.exe) (755MB file)
+
+    Aug 19, 2023:
     * [h2oGPT GPU-CUDA Installer](https://h2o-release.s3.amazonaws.com/h2ogpt/h2oGPT_0.0.1_gpu.exe) (1.8GB file)
     * [h2oGPT CPU Installer](https://h2o-release.s3.amazonaws.com/h2ogpt/h2oGPT_0.0.1_cpu.exe) (755MB file)
 
-    The installers include all dependencies for document Q/A, except models (LLM, embedding, reward) that are downloadable via UI.  After installation, go to start and run h2oGPT, and a web browser will open for h2oGPT.  To use LLaMa model, go to Models tab, select `llama` base model, then click load to download from preset URL.  Then use as normal.  To terminate the app, in task manager kill the `Python` process named `pythonw.exe` as will also show up in `nvidia-smi` if using GPUs.  Set environment variables (in system properties->advanced->environment variables) to control things:
+    The installers include all dependencies for document Q/A except for models (LLM, embedding, reward), which you can download through the UI.  After installation, go to start and run h2oGPT, and a web browser will open for h2oGPT.  To use LLaMa model, go to Models tab, select `llama` base model, then click load to download from preset URL.  Then use as normal.  To terminate the app, in task manager kill the `Python` process named `pythonw.exe` as will also show up in `nvidia-smi` if using GPUs.  Set environment variables (in system properties->advanced->environment variables) to control things:
       * `n_jobs`: number of cores for various tasks
       * `OMP_NUM_THREADS` thread count for LLaMa
-      * `CUDA_VISIBLE_DEVICES` which GPUs are visible
+      * `CUDA_VISIBLE_DEVICES` which GPUs are used.  Recommend set to single fast GPU, e.g. `CUDA_VISIBLE_DEVICES=0` if have multiple GPUs.  Note that UI cannot control which GPUs (or CPU mode) for LLaMa models.
       * Any CLI argument from `python generate.py --help` with environment variable set as `h2ogpt_x`, e.g. `h2ogpt_h2ocolors` to `False`.
       * Set env `h2ogpt_server_name` to actual IP address for LAN to see app, e.g. `h2ogpt_server_name` to `192.168.1.172` and allow access through firewall if have Windows Defender activated.
   * [Windows 10/11 Manual Install and Run Docs](docs/README_WINDOWS.md)
@@ -68,8 +76,8 @@ If encounter issues with llama-cpp-python or other packages that try to compile 
 
 ---
 
-#### MACOS (CPU/M1/M2) with full document Q/A capability
-* [MACOS Manual Install and Run Docs](docs/README_MACOS.md)
+#### macOS (CPU/M1/M2) with full document Q/A capability
+* [macOS Manual Install and Run Docs](docs/README_MACOS.md)
 
 ---
 
@@ -79,8 +87,8 @@ If encounter issues with llama-cpp-python or other packages that try to compile 
 * [Small memory profile with ok accuracy](https://huggingface.co/TheBloke/Llama-2-13B-Chat-GGML) 16GB GPU if full GPU offloading
 * [Balanced accuracy and size](https://huggingface.co/h2oai/h2ogpt-4096-llama2-13b-chat) on 16-bit with TGI/vLLM using ~45GB/GPU when in use (1xA100)
 * [Smallest or CPU friendly](https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML) 32GB system ram or 9GB GPU if full GPU offloading
-
-**GPU** mode requires CUDA support via torch and transformers. A 7B/13B model in 16-bit uses 14GB/26GB of GPU memory to store the weights (2 bytes per weight). Compression such as 4-bit precision (bitsandbytes, AWQ, GPTQ, etc.) can further reduce memory requirements down to less than 6GB when asking a question about your documents (see [low-memory mode](docs/FAQ.md#low-memory-mode)).
+* [Best for 4*A10G using g5.12xlarge](https://huggingface.co/TheBloke/Llama-2-70B-chat-AWQ) AWQ LLaMa 70B using 4*A10G using vLLM
+**GPU** mode requires CUDA support via torch and transformers. A 7B/13B model in 16-bit uses 14GB/26GB of GPU memory to store the weights (2 bytes per weight). Compression such as 4-bit precision (bitsandbytes, AWQ, GPTQ, etc.) can further reduce memory requirements down to less than 6GB when asking a question about your documents. (For more information, see [low-memory mode](docs/FAQ.md#low-memory-mode).)
 
 **CPU** mode uses GPT4ALL and LLaMa.cpp, e.g. gpt4all-j, requiring about 14GB of system RAM in typical use.
 
@@ -122,7 +130,7 @@ YouTube 4K version: https://www.youtube.com/watch?v=_iktbj4obAI
 <!--  cat README.md | ./gh-md-toc  -  But Help is heavily processed -->
 * [Getting Started](#getting-started)
    * [Linux (CPU or CUDA)](docs/README_LINUX.md)
-   * [MACOS (CPU or M1/M2)](docs/README_MACOS.md)
+   * [macOS (CPU or M1/M2)](docs/README_MACOS.md)
    * [Windows 10/11 (CPU or CUDA)](docs/README_WINDOWS.md)
    * [GPU (CUDA, AutoGPTQ, exllama) Running Details](docs/README_GPU.md)
    * [CPU Running Details](docs/README_CPU.md)
@@ -142,6 +150,14 @@ YouTube 4K version: https://www.youtube.com/watch?v=_iktbj4obAI
    * [LangChain file types supported](docs/README_LangChain.md#supported-datatypes)
    * [CLI Database control](docs/README_LangChain.md#database-creation)
    * [FAQ](docs/FAQ.md)
+     * [Adding LLM Models (including using GGUF and Attention Sinks)](docs/FAQ.md#adding-models)
+     * [Adding Embedding Models](docs/FAQ.md#add-new-embedding-model)
+     * [Adding Prompts](docs/FAQ.md#adding-prompt-templates)
+     * [In-Context Learning](docs/FAQ.md#in-context-learning-via-prompt-engineering)
+     * [Multiple GPUs](docs/FAQ.md#multiple-gpus)
+     * [Low-Memory Usage](docs/FAQ.md#low-memory-mode)
+     * [Environment Variables](docs/FAQ.md#what-envs-can-i-pass-to-control-h2ogpt)
+     * [HTTPS access for server and client](docs/FAQ.md#https-access-for-server-and-client)
    * [Useful Links](docs/LINKS.md)
    * [Fine-Tuning](docs/FINETUNE.md)
    * [Triton](docs/TRITON.md)
@@ -150,14 +166,19 @@ YouTube 4K version: https://www.youtube.com/watch?v=_iktbj4obAI
 * [Why H2O.ai?](#why-h2oai)
 * [Disclaimer](#disclaimer)
 
+### Experimental features
+
+These are not part of normal installation instructions and are experimental.
+
+* [SerpAPI web search augmentation](docs/README_SerpAPI.md) -- in Beta testing. Working well but hits file closed failure under intense use.
+* [Agents](docs/README_Agents.md) -- in Alpha testing.  Optimal for OpenAI, but that also fails sometimes.
+
 ### Roadmap
 
 - Integration of code and resulting LLMs with downstream applications and low/no-code platforms
-- Complement h2oGPT chatbot with search and other APIs
-- High-performance distributed training of larger models on trillion tokens
+- Complement h2oGPT chatbot with other APIs like [ToolBench](https://github.com/OpenBMB/ToolBench)
 - Enhance the model's code completion, reasoning, and mathematical capabilities, ensure factual correctness, minimize hallucinations, and avoid repetitive output
-- Add other tools like search
-- Add agents for SQL and CSV question/answer
+- Add better agents for SQL and CSV question/answer
 
 ### Development
 
@@ -181,9 +202,7 @@ YouTube 4K version: https://www.youtube.com/watch?v=_iktbj4obAI
 
 - [README for LangChain](docs/README_LangChain.md)
 
-- Flash attention support, see [Flash Attention](docs/INSTALL.md#flash-attention)
-
-- More [Links](docs/LINKS.md), context, competitors, models, datasets
+- Useful [links](docs/LINKS.md) for additional context and information on competitors, models, and datasets
 
 ### Acknowledgements
 

@@ -1,13 +1,21 @@
 import functools
+import json
 
 from src.enums import t5_type
 
 
-def get_loaders(model_name, reward_type, llama_type=None, load_gptq='', load_exllama=False, config=None,
-                rope_scaling=None, max_seq_len=None, model_name_exllama_if_no_config=''):
+def get_loaders(model_name, reward_type, llama_type=None, load_gptq='', load_awq='', load_exllama=False,
+                config=None,
+                rope_scaling=None, max_seq_len=None, model_name_exllama_if_no_config='',
+                exllama_dict=None, gptq_dict=None,
+                attention_sinks=None, sink_dict=None,
+                truncation_generation=None,
+                ):
     # NOTE: Some models need specific new prompt_type
     # E.g. t5_xxl_true_nli_mixture has input format: "premise: PREMISE_TEXT hypothesis: HYPOTHESIS_TEXT".)
     if load_exllama:
+        if exllama_dict is None:
+            exllama_dict = {}
         from src.llm_exllama import H2OExLlamaTokenizer, H2OExLlamaGenerator
         from exllama.model import ExLlama, ExLlamaCache, ExLlamaConfig
         import os, glob
@@ -55,6 +63,10 @@ def get_loaders(model_name, reward_type, llama_type=None, load_gptq='', load_exl
             exconfig.max_seq_len = max_seq_len
 
         exconfig.model_path = model_path  # supply path to model weights file
+        for k, v in exllama_dict.items():
+            setattr(exconfig, k, v)
+        if 'set_auto_map' in exllama_dict:
+            exconfig.auto_map = [float(alloc) for alloc in exllama_dict['set_auto_map'].split(",")]
 
         model = ExLlama(exconfig)  # create ExLlama instance and load the weights
         tokenizer = H2OExLlamaTokenizer(tokenizer_path)  # create tokenizer from tokenizer model file
@@ -64,18 +76,40 @@ def get_loaders(model_name, reward_type, llama_type=None, load_gptq='', load_exl
         generator = H2OExLlamaGenerator(model, tokenizer, cache)  # create generator
         return generator, tokenizer, False
     if load_gptq:
+        if gptq_dict is None:
+            gptq_dict = {}
         from transformers import AutoTokenizer
         from auto_gptq import AutoGPTQForCausalLM
-        use_triton = False
+        if 'use_triton' not in gptq_dict:
+            gptq_dict['use_triton'] = False
+        if 'llama-2-70B-chat-GPTQ' in model_name.lower() and 'inject_fused_attention' not in gptq_dict:
+            gptq_dict.update(dict(inject_fused_attention=False))
         model_loader = functools.partial(AutoGPTQForCausalLM.from_quantized,
-                                         quantize_config=None, use_triton=use_triton,
+                                         quantize_config=None,
+                                         **gptq_dict,
+                                         )
+        return model_loader, AutoTokenizer, False
+    if load_awq:
+        from transformers import AutoTokenizer
+        from awq import AutoAWQForCausalLM
+        model_loader = functools.partial(AutoAWQForCausalLM.from_quantized,
+                                         fuse_layers=True,
                                          )
         return model_loader, AutoTokenizer, False
     if llama_type is None:
         llama_type = "llama" in model_name.lower()
     if llama_type:
-        from transformers import LlamaForCausalLM, LlamaTokenizer
-        return LlamaForCausalLM.from_pretrained, LlamaTokenizer, False
+        if attention_sinks:
+            # below will fail if don't have, to get just do in h2ogpt repo directory:
+            # pip install git+https://github.com/tomaarsen/attention_sinks.git
+            from attention_sinks import LlamaForCausalLM
+            from transformers import LlamaTokenizer
+            model_loader = functools.partial(LlamaForCausalLM.from_pretrained,
+                                             **sink_dict)
+            return model_loader, LlamaTokenizer, False
+        else:
+            from transformers import LlamaForCausalLM, LlamaTokenizer
+            return LlamaForCausalLM.from_pretrained, LlamaTokenizer, False
     elif 'distilgpt2' in model_name.lower():
         from transformers import AutoModelForCausalLM, AutoTokenizer
         return AutoModelForCausalLM.from_pretrained, AutoTokenizer, False
@@ -101,6 +135,16 @@ def get_loaders(model_name, reward_type, llama_type=None, load_gptq='', load_exl
         from transformers import AutoTokenizer, AutoModelForCausalLM
         model_loader = AutoModelForCausalLM
         tokenizer_loader = AutoTokenizer
+
+        if attention_sinks:
+            # below will fail if don't have, to get just do in h2ogpt repo directory:
+            # pip install git+https://github.com/tomaarsen/attention_sinks.git
+            from attention_sinks import AutoModelForCausalLM
+            from transformers import LlamaTokenizer
+            model_loader = functools.partial(AutoModelForCausalLM.from_pretrained,
+                                             **sink_dict)
+            return model_loader, tokenizer_loader, False
+
         return model_loader.from_pretrained, tokenizer_loader, False
 
 

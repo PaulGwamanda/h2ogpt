@@ -11,6 +11,7 @@ H2OGPT_PARAMETERS_TO_CLIENT = collections.OrderedDict(
     temperature="temperature",
     top_p="top_p",
     top_k="top_k",
+    penalty_alpha="penalty_alpha",
     num_beams="beams",
     max_new_tokens="max_output_length",
     min_new_tokens="min_output_length",
@@ -42,8 +43,14 @@ H2OGPT_PARAMETERS_TO_CLIENT = collections.OrderedDict(
     jq_schema="jq_schema",
     visible_models="visible_models",
     h2ogpt_key="h2ogpt_key",
+    add_search_to_context="add_search_to_context",
     chat_conversation="chat_conversation",
     text_context_list="text_context_list",
+    docs_ordering_type="docs_ordering_type",
+    min_max_new_tokens="min_max_new_tokens",
+    max_input_tokens="max_input_tokens",
+    docs_token_handling="docs_token_handling",
+    docs_joiner="docs_joiner",
 )
 
 

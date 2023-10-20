@@ -2,11 +2,30 @@
 
 ## Setup Docker for CPU Inference
 
-No special docker instructions are required, just follow [these instructions](https://docs.docker.com/engine/install/ubuntu/) to get docker setup at all.  Add your user as part of `docker` group, exit shell, login back in, and run:
+No special docker instructions are required, just follow [these instructions](https://docs.docker.com/engine/install/ubuntu/) to get docker setup at all, i.e.:
+```bash
+# Add Docker's official GPG key:
+sudo apt-get update
+sudo apt-get install ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+# Add the repository to Apt sources:
+echo \
+  "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+# install docker
+sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+Add your user as part of `docker` group, exit shell, login back in, and run:
 ```bash
 newgrp docker
 ```
-which avoids having to reboot.  Or just reboot to have docker access.
+which avoids having to reboot.  Or just reboot to have docker access.  If this cannot be done without entering root access, then edit the `/etc/group` and add your user to group `docker`.
 
 ## Setup Docker for GPU Inference
 
@@ -18,7 +37,7 @@ distribution=$(. /etc/os-release;echo $ID$VERSION_ID) \
         sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
         sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit-base
-sudo apt install nvidia-container-runtime
+sudo apt install -y nvidia-container-runtime
 sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
 ```
@@ -84,7 +103,7 @@ docker run \
        -e CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \
        gcr.io/vorvan/h2oai/h2ogpt-runtime:0.1.0 /workspace/generate.py \
           --base_model=TheBloke/Llama-2-7b-Chat-GPTQ \
-          --load_gptq="gptq_model-4bit-128g" \
+          --load_gptq=model \
           --use_safetensors=True \
           --prompt_type=llama2 \
           --save_dir='/workspace/save/' \
@@ -379,11 +398,11 @@ For a more detailed description of other parameters of the make_db script, check
 
 ```bash
 # build image
-make docker_build_deps
 touch build_info.txt
 docker build -t h2ogpt .
 ```
 then to run this version of the docker image, just replace `gcr.io/vorvan/h2oai/h2ogpt-runtime:0.1.0` with `h2ogpt:latest` in above run command.
+when any of the prebuilt dependencies are changed, e.g. duckdb or auto-gptq, you need to run `make docker_build_deps` or similar code what's in that Makefile target.
 
 ## Docker Compose Setup & Inference
 

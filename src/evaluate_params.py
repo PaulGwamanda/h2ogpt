@@ -19,7 +19,8 @@ gen_hyper0 = ['num_beams',
               ]
 gen_hyper = ['temperature',
              'top_p',
-             'top_k'] + gen_hyper0
+             'top_k',
+             'penalty_alpha'] + gen_hyper0
 reader_names = ['image_loaders', 'pdf_loaders', 'url_loaders', 'jq_schema']
 
 eval_func_param_names = ['instruction',
@@ -50,8 +51,14 @@ eval_func_param_names = ['instruction',
                         reader_names + \
                         ['visible_models',
                          'h2ogpt_key',
+                         'add_search_to_context',
                          'chat_conversation',
                          'text_context_list',
+                         'docs_ordering_type',
+                         'min_max_new_tokens',
+                         'max_input_tokens',
+                         'docs_token_handling',
+                         'docs_joiner',
                          ]
 
 # form evaluate defaults for submit_nochat_api

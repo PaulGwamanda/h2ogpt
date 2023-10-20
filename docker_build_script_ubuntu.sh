@@ -1,4 +1,6 @@
-#!/bin/bash -e
+#!/bin/bash
+set -o pipefail
+set -ex
 
 export DEBIAN_FRONTEND=noninteractive
 export PATH=/h2ogpt_conda/bin:$PATH
@@ -55,6 +57,41 @@ playwright install --with-deps
 python3.10 -m pip uninstall -y pyduckdb duckdb && \
 python3.10 -m pip install https://s3.amazonaws.com/artifacts.h2o.ai/deps/h2ogpt/duckdb-0.8.2.dev4026%2Bgdcd8c1ffc5-cp310-cp310-linux_x86_64.whl --no-cache-dir --force-reinstall
 
+# setup tiktoken cache
+export TIKTOKEN_CACHE_DIR=/workspace/tiktoken_cache
+python3.10 -c "
+import tiktoken
+from tiktoken_ext import openai_public
+# FakeTokenizer etc. needs tiktoken for general tasks
+for enc in openai_public.ENCODING_CONSTRUCTORS:
+    encoding = tiktoken.get_encoding(enc)
+model_encodings = [
+    'gpt-4',
+    'gpt-4-0314',
+    'gpt-4-32k',
+    'gpt-4-32k-0314',
+    'gpt-3.5-turbo',
+    'gpt-3.5-turbo-16k',
+    'gpt-3.5-turbo-0301',
+    'text-ada-001',
+    'ada',
+    'text-babbage-001',
+    'babbage',
+    'text-curie-001',
+    'curie',
+    'davinci',
+    'text-davinci-003',
+    'text-davinci-002',
+    'code-davinci-002',
+    'code-davinci-001',
+    'code-cushman-002',
+    'code-cushman-001'
+]
+for enc in model_encodings:
+    encoding = tiktoken.encoding_for_model(enc)
+print('Done!')
+"
+
 # Install vllm
 export VLLM_CACHE=/workspace/.vllm_cache
 cd /h2ogpt_conda && python -m venv vllm_env --system-site-packages
@@ -63,11 +100,14 @@ sp=`python3.10 -c 'import site; print(site.getsitepackages()[0])'` && \
     cd $sp && \
     rm -rf openai_vllm* && \
     cp -a openai openai_vllm && \
-    cp -a openai-0.27.8.dist-info openai_vllm-0.27.8.dist-info && \
+    file0=`ls|grep openai|grep dist-info` && \
+    file1=`echo $file0|sed 's/openai-/openai_vllm-/g'` && \
+    cp -a $file0 $file1 && \
     find openai_vllm -name '*.py' | xargs sed -i 's/from openai /from openai_vllm /g' && \
     find openai_vllm -name '*.py' | xargs sed -i 's/openai\./openai_vllm./g' && \
     find openai_vllm -name '*.py' | xargs sed -i 's/from openai\./from openai_vllm./g' && \
     find openai_vllm -name '*.py' | xargs sed -i 's/import openai/import openai_vllm/g' && \
+    find openai_vllm -name '*.py' | xargs sed -i 's/OpenAI/vLLM/g' && \
     cd /h2ogpt_conda && \
     python -m venv vllm_env --system-site-packages && \
     /h2ogpt_conda/vllm_env/bin/python -m pip install vllm ray pandas --extra-index-url https://download.pytorch.org/whl/cu118 && \
@@ -81,6 +121,9 @@ mkdir -p /h2ogpt_conda/envs/vllm/bin && \
 # Track build info
 cd /workspace && make build_info.txt
 cp /workspace/build_info.txt /build_info.txt
+
+mkdir -p /workspace/save
+chmod -R a+rwx /workspace/save
 
 # Cleanup
 rm -rf /workspace/Miniconda3-py310_23.1.0-1-Linux-x86_64.sh

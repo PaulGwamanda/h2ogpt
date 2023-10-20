@@ -20,15 +20,17 @@ def run_eval(  # for local function:
         examples=None, memory_restriction_level=None,
         # for get_model:
         score_model=None, load_8bit=None, load_4bit=None, low_bit_mode=None, load_half=None,
-        load_gptq=None, load_exllama=None, use_safetensors=None, revision=None,
+        load_gptq=None, load_awq=None, load_exllama=None, use_safetensors=None, revision=None,
         use_gpu_id=None, tokenizer_base_model=None,
         gpu_id=None, n_jobs=None, local_files_only=None, resume_download=None, use_auth_token=None,
         trust_remote_code=None, offload_folder=None, rope_scaling=None, max_seq_len=None, compile_model=None,
-        llamacpp_dict=None,
+        llamacpp_dict=None, exllama_dict=None, gptq_dict=None, attention_sinks=None, sink_dict=None,
+        truncation_generation=None,
         # for evaluate args beyond what's already above, or things that are always dynamic and locally created
         temperature=None,
         top_p=None,
         top_k=None,
+        penalty_alpha=None,
         num_beams=None,
         max_new_tokens=None,
         min_new_tokens=None,
@@ -53,8 +55,14 @@ def run_eval(  # for local function:
         jq_schema=None,
         visible_models=None,
         h2ogpt_key=None,
+        add_search_to_context=None,
         chat_conversation=None,
         text_context_list=None,
+        docs_ordering_type=None,
+        min_max_new_tokens=None,
+        max_input_tokens=None,
+        docs_token_handling=None,
+        docs_joiner=None,
         # for evaluate kwargs:
         captions_model=None,
         caption_loader=None,
@@ -64,6 +72,7 @@ def run_eval(  # for local function:
         pdf_loaders_options0=None,
         url_loaders_options0=None,
         jq_schema0=None,
+        keep_sources_in_context=None,
         src_lang=None, tgt_lang=None, concurrency_count=None, save_dir=None, sanitize_bot_response=None,
         model_state0=None,
         max_max_new_tokens=None,
@@ -82,9 +91,10 @@ def run_eval(  # for local function:
         show_link_in_sources=None,
         add_chat_history_to_context=None,
         context=None, iinput=None,
-        db_type=None, first_para=None, text_limit=None, verbose=None, cli=None, reverse_docs=None,
+        db_type=None, first_para=None, text_limit=None, verbose=None,
+        gradio=None, cli=None,
         use_cache=None,
-        auto_reduce_chunks=None, max_chunks=None,
+        auto_reduce_chunks=None, max_chunks=None, headsize=None,
         model_lock=None, force_langchain_evaluate=None,
         model_state_none=None,
 ):
@@ -181,7 +191,8 @@ def run_eval(  # for local function:
                                                  **get_kwargs(get_model, exclude_names=['reward_type'], **locals()))
             model_dict = dict(base_model=base_model, tokenizer_base_model=tokenizer_base_model,
                               lora_weights=lora_weights,
-                              inference_server=inference_server, prompt_type=prompt_type, prompt_dict=prompt_dict)
+                              inference_server=inference_server, prompt_type=prompt_type, prompt_dict=prompt_dict,
+                              visible_models=None, h2ogpt_key=None)
             model_state = dict(model=model, tokenizer=tokenizer, device=device)
             model_state.update(model_dict)
             requests_state0 = {}
@@ -230,7 +241,7 @@ def run_eval(  # for local function:
                         data_point = dict(instruction=instruction, input=iinput, context=context)
                         prompter = Prompter(prompt_type, prompt_dict,
                                             debug=debug, chat=chat, stream_output=stream_output)
-                        prompt = prompter.generate_prompt(data_point)
+                        prompt = prompter.generate_prompt(data_point, context_from_history=False)
                     else:
                         # just raw input and output
                         if eval_prompts_only_num > 0:
