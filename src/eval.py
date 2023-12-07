@@ -5,8 +5,8 @@ import pandas as pd
 import torch
 from matplotlib import pyplot as plt
 
-from evaluate_params import eval_func_param_names, eval_extra_columns
-from gen import get_score_model, get_model, evaluate, check_locals
+from evaluate_params import eval_func_param_names, eval_extra_columns, input_args_list
+from gen import get_score_model, get_model, evaluate, check_locals, get_model_retry
 from prompter import Prompter
 from utils import clear_torch_cache, NullContext, get_kwargs, makedirs
 
@@ -19,12 +19,13 @@ def run_eval(  # for local function:
         eval_filename=None, eval_prompts_only_num=None, eval_prompts_only_seed=None, eval_as_output=None,
         examples=None, memory_restriction_level=None,
         # for get_model:
-        score_model=None, load_8bit=None, load_4bit=None, low_bit_mode=None, load_half=None,
-        load_gptq=None, load_awq=None, load_exllama=None, use_safetensors=None, revision=None,
+        score_model=None, load_8bit=None, load_4bit=None, low_bit_mode=None, load_half=None, use_flash_attention_2=None,
+        load_gptq=None, use_autogptq=None, load_awq=None, load_exllama=None, use_safetensors=None, revision=None,
         use_gpu_id=None, tokenizer_base_model=None,
-        gpu_id=None, n_jobs=None, local_files_only=None, resume_download=None, use_auth_token=None,
+        gpu_id=None, n_jobs=None, n_gpus=None, local_files_only=None, resume_download=None, use_auth_token=None,
         trust_remote_code=None, offload_folder=None, rope_scaling=None, max_seq_len=None, compile_model=None,
-        llamacpp_dict=None, exllama_dict=None, gptq_dict=None, attention_sinks=None, sink_dict=None,
+        llamacpp_dict=None, llamacpp_path=None,
+        exllama_dict=None, gptq_dict=None, attention_sinks=None, sink_dict=None, hf_model_dict=None,
         truncation_generation=None,
         # for evaluate args beyond what's already above, or things that are always dynamic and locally created
         temperature=None,
@@ -47,9 +48,13 @@ def run_eval(  # for local function:
         chunk_size=None,
         document_subset=None,
         document_choice=None,
+        document_source_substrings=None,
+        document_source_substrings_op=None,
+        document_content_substrings=None,
+        document_content_substrings_op=None,
         pre_prompt_query=None, prompt_query=None,
-        pre_prompt_summary=None, prompt_summary=None,
-        image_loaders=None,
+        pre_prompt_summary=None, prompt_summary=None, hyde_llm_prompt=None,
+        image_audio_loaders=None,
         pdf_loaders=None,
         url_loaders=None,
         jq_schema=None,
@@ -61,14 +66,25 @@ def run_eval(  # for local function:
         docs_ordering_type=None,
         min_max_new_tokens=None,
         max_input_tokens=None,
+        max_total_input_tokens=None,
         docs_token_handling=None,
         docs_joiner=None,
+        hyde_level=None,
+        hyde_template=None,
+        doc_json_mode=None,
+        chatbot_role=None,
+        speaker=None,
+        tts_language=None,
+        tts_speed=None,
         # for evaluate kwargs:
         captions_model=None,
         caption_loader=None,
         doctr_loader=None,
         pix2struct_loader=None,
-        image_loaders_options0=None,
+        asr_model=None,
+        asr_loader=None,
+
+        image_audio_loaders_options0=None,
         pdf_loaders_options0=None,
         url_loaders_options0=None,
         jq_schema0=None,
@@ -98,6 +114,7 @@ def run_eval(  # for local function:
         model_lock=None, force_langchain_evaluate=None,
         model_state_none=None,
 ):
+    from_ui = False
     check_locals(**locals())
 
     if not context:
@@ -171,7 +188,7 @@ def run_eval(  # for local function:
     eval_out_filename = os.path.join(scoring_path, eval_out_filename)
 
     # torch.device("cuda") leads to cuda:x cuda:y mismatches for multi-GPU consistently
-    n_gpus = torch.cuda.device_count() if torch.cuda.is_available else 0
+    n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     device = 'cpu' if n_gpus == 0 else 'cuda'
     context_class = NullContext if n_gpus > 1 or n_gpus == 0 else torch.device
 
@@ -187,8 +204,9 @@ def run_eval(  # for local function:
                                                                    **locals()))
 
         if not eval_as_output:
-            model, tokenizer, device = get_model(reward_type=False,
-                                                 **get_kwargs(get_model, exclude_names=['reward_type'], **locals()))
+            model, tokenizer, device = get_model_retry(reward_type=False,
+                                                       **get_kwargs(get_model, exclude_names=['reward_type'],
+                                                                    **locals()))
             model_dict = dict(base_model=base_model, tokenizer_base_model=tokenizer_base_model,
                               lora_weights=lora_weights,
                               inference_server=inference_server, prompt_type=prompt_type, prompt_dict=prompt_dict,
@@ -196,12 +214,12 @@ def run_eval(  # for local function:
             model_state = dict(model=model, tokenizer=tokenizer, device=device)
             model_state.update(model_dict)
             requests_state0 = {}
-            fun = partial(evaluate, model_state, my_db_state0, selection_docs_state0, requests_state0,
-                          **get_kwargs(evaluate, exclude_names=['model_state',
-                                                                'my_db_state',
-                                                                'selection_docs_state',
-                                                                'requests_state']
-                                                               + eval_func_param_names,
+            roles_state0 = None
+            args = (model_state, my_db_state0, selection_docs_state0, requests_state0, roles_state0)
+            assert len(args) == len(input_args_list)
+            fun = partial(evaluate,
+                          *args,
+                          **get_kwargs(evaluate, exclude_names=input_args_list + eval_func_param_names,
                                        **locals()))
         else:
             assert eval_prompts_only_num > 0
@@ -233,7 +251,7 @@ def run_eval(  # for local function:
             gener = fun(*tuple(ex), exi=exi) if eval_as_output else fun(*tuple(ex))
             for res_fun in gener:
                 res = res_fun['response']
-                extra = res_fun['sources']
+                sources = res_fun['sources']
                 print(res)
                 if smodel:
                     score_with_prompt = False

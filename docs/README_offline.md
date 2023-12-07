@@ -26,7 +26,7 @@ Some of these locations can be controlled, but others not, so best to make local
 
 If you are only concerned with what h2oGPT needs, not any inference servers, you can run with `--prepare_offline_level=1` that will not obtain models associated with inference severs (e.g. vLLM or TGI).
 
-If you have a GGML file, you should download it ahead of time and place it in some path you provide to `--llamacpp_dict` for its `model_path_llama` dict entry.
+If you have a GGUF/GGML file, you should download it ahead of time and place it in some path you provide to `--llamacpp_dict` for its `model_path_llama` dict entry.
 
 ## Hard Way:
 
@@ -34,7 +34,7 @@ Identify all models needed and download each.  The below list is not exhaustive 
 
 Note, when running `generate.py` and asking your first question, it will download the model(s), which for the 6.9B model takes about 15 minutes per 3 pytorch bin files if have 10MB/s download.
 
-If all data has been put into `~/.cache` by HF transformers and GGML files downloaded already and one points to them (e.g. with `--model_path_llama=llama-2-7b-chat.ggmlv3.q8_0.bin`), then these following steps (those related to downloading HF models) are not required.
+If all data has been put into `~/.cache` by HF transformers and GGUF/GGML files downloaded already and one points to them (e.g. with `--model_path_llama=llama-2-7b-chat.Q6_K.gguf` from pre-downloaded `https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf`), then these following steps (those related to downloading HF models) are not required.
 
 * Download model and tokenizer of choice
     
@@ -46,7 +46,11 @@ If all data has been put into `~/.cache` by HF transformers and GGML files downl
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.save_pretrained(model_name)
     ```
-    If using GGML files, those should be downloaded separately manually, and point to file path, e.g. `--base_model=llama --model_path_llama=llama-2-7b-chat.ggmlv3.q8_0.bin`.
+    If using GGUF files, those should be downloaded separately manually, e.g.:
+   ```bash
+      wget https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf
+   ```
+  and point to file path, e.g. `--base_model=llama --model_path_llama=llama-2-7b-chat.Q6_K.gguf`.
 
 * Download reward model, unless pass `--score_model='None'` to `generate.py`
     ```python
@@ -62,7 +66,7 @@ If all data has been put into `~/.cache` by HF transformers and GGML files downl
 * For LangChain support, download embedding model:
     ```python
     hf_embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
-    model_kwargs = 'cpu'
+    model_kwargs = dict(device='cpu')
     from langchain.embeddings import HuggingFaceEmbeddings
     embedding = HuggingFaceEmbeddings(model_name=hf_embedding_model, model_kwargs=model_kwargs)
     ```
@@ -97,6 +101,18 @@ If the front-end can still access internet, but just backend should not, then on
 
 Note that gradio attempts to download [iframeResizer.contentWindow.min.js](https://cdnjs.cloudflare.com/ajax/libs/iframe-resizer/4.3.1/iframeResizer.contentWindow.min.js),
 but nothing prevents gradio from working without this.  So a simple firewall block is sufficient.  For more details, see: https://github.com/AUTOMATIC1111/stable-diffusion-webui/pull/10324.
+
+For non-HF models, you must specify the file name as we cannot map HF name to file name for GGUF/GPTQ etc. files automagically without internet.  E.g. after running one of the offline preparation ways above, run:
+```
+HF_DATASETS_OFFLINE=1;TRANSFORMERS_OFFLINE=1 python generate.py --gradio_offline_level=2 --gradio_offline_level=2 --base_model=llama --model_path_llama=zephyr-7b-beta.Q5_K_M.gguf --prompt_type=zephyr
+```
+That is, you cannot do:
+```
+HF_DATASETS_OFFLINE=1;TRANSFORMERS_OFFLINE=1 python generate.py --gradio_offline_level=2 --gradio_offline_level=2 --base_model=TheBloke/zephyr-7B-beta-GGUF --prompt_type=zephyr
+```
+since the mapping from that name to get file etc. is not trivial and only possible with internet.
+
+It is good idea to also set `--prompt_type`, since the version of model name given may not be in the prompt dictionary lookup.
 
 ### Disable access or port
 

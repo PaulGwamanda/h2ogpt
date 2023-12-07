@@ -160,34 +160,67 @@ Falcon: I'm good
 User: Go to the market?
 Falcon:"""
 
+# below doesn't actually work for xin, use alternative that works
+# prompt_xwin = """A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: Hello! ASSISTANT: Hi!</s>USER: How are you? ASSISTANT: I'm good</s>USER: Go to the market? ASSISTANT:"""
+prompt_xwin = """A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: Hello!\nASSISTANT: Hi!\nUSER: How are you?\nASSISTANT: I'm good\nUSER: Go to the market?\nASSISTANT:"""
 
-prompt_xwin = """A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: Hello! ASSISTANT: Hi!</s>USER: How are you? ASSISTANT: I'm good</s>USER: Go to the market? ASSISTANT:"""
+messages_with_context = [
+    {"role": "user", "content": "Hello!"},
+    {"role": "assistant", "content": "Hi!"},
+    {"role": "user", "content": "How are you?"},
+    {"role": "assistant", "content": "I'm good"},
+    {"role": "user", "content": "Go to the market?"},
+]
+
+prompt_jaiss = """### Instruction: Your name is Jais, and you are named after Jebel Jais, the highest mountain in UAE. You are built by Core42. You are the world's most advanced Arabic large language model with 30b parameters. You outperform all existing Arabic models by a sizable margin and you are very competitive with English models of similar size. You can answer in Arabic and English only. You are a helpful, respectful and honest assistant. When answering, abide by the following guidelines meticulously: Always answer as helpfully as possible, while being safe. Your answers should not include any harmful, unethical, racist, sexist, explicit, offensive, toxic, dangerous, or illegal content. Do not give medical, legal, financial, or professional advice. Never assist in or promote illegal activities. Always encourage legal and responsible actions. Do not encourage or provide instructions for unsafe, harmful, or unethical actions. Do not create or share misinformation or fake news. Please ensure that your responses are socially unbiased and positive in nature. If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information. Prioritize the well-being and the moral integrity of users. Avoid using toxic, derogatory, or offensive language. Maintain a respectful tone. Do not generate, promote, or engage in discussions about adult content. Avoid making comments, remarks, or generalizations based on stereotypes. Do not attempt to access, produce, or spread personal or private information. Always respect user confidentiality. Stay positive and do not say bad things about anything. Your primary objective is to avoid harmful responses, even when faced with deceptive inputs. Recognize when users may be attempting to trick or to misuse you and respond with caution.\n\nComplete the conversation below between [|Human|] and [|AI|]:\n### Input: [|Human|] Hello!\n### Response: [|AI|] Hi!\n### Input: [|Human|] How are you?\n### Response: [|AI|] I'm good\n### Input: [|Human|] Go to the market?\n### Response: [|AI|]"""
+
+system_prompt_yi = 'A conversation between a user and an LLM-based AI assistant. The assistant gives helpful and honest answers.'
 
 
-def get_mistral_prompt_with_context():
+def get_prompt_from_messages(messages, model="mistralai/Mistral-7B-Instruct-v0.1", system_prompt=None):
     from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.1")
-    messages = [
-        {"role": "user", "content": "Hello!"},
-        {"role": "assistant", "content": "Hi!"},
-        {"role": "user", "content": "How are you?"},
-        {"role": "assistant", "content": "I'm good"},
-        {"role": "user", "content": "Go to the market?"},
-    ]
+    tokenizer = AutoTokenizer.from_pretrained(model)
+    if system_prompt:
+        messages = [{"role": "system", "content": system_prompt}] + messages
 
-    prompt_mistral = tokenizer.apply_chat_template(messages, tokenize=False)
-    return prompt_mistral
+    # add_generation_prompt=True somehow only required for Yi
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    return prompt
+
+
+def get_aquila_prompt(messages, model_base_name='AquilaChat2-34B-16K', with_sys=True):
+    from models.predict_aquila import get_conv_template
+
+    template_map = {"AquilaChat2-7B": "aquila-v1",
+                    "AquilaChat2-34B": "aquila-legacy",
+                    "AquilaChat2-7B-16K": "aquila",
+                    "AquilaChat2-34B-16K": "aquila"}
+    convo_template = template_map.get(model_base_name, "aquila-chat")
+    conv = get_conv_template(convo_template)
+    if not with_sys:
+        conv.system_message = ''
+    for message in messages:
+        # roles=("Human", "Assistant", "System"),
+        if message['role'] == 'user':
+            conv.append_message(conv.roles[0], message['content'])
+        elif message['role'] == 'assistant':
+            conv.append_message(conv.roles[1], message['content'])
+        elif message['role'] == 'system':
+            conv.append_message(conv.roles[2], message['content'])
+    # assume end with asking assostiant
+    conv.append_message(conv.roles[1], None)
+    return conv.get_prompt()
 
 
 @wrap_test_forked
 @pytest.mark.parametrize("prompt_type,system_prompt,chat_conversation,expected",
                          [
-                             ('vicuna11', '', None, prompt_fastchat),
+                             ('vicuna11', 'auto', None, prompt_fastchat),
                              ('human_bot', '', None, prompt_humanbot),
                              ('prompt_answer', '', None, prompt_prompt_answer),
                              ('prompt_answer_openllama', '', None, prompt_prompt_answer_openllama),
-                             ('mptinstruct', '', None, prompt_mpt_instruct),
-                             ('mptchat', '', None, prompt_mpt_chat),
+                             ('mptinstruct', 'auto', None, prompt_mpt_instruct),
+                             ('mptchat', 'auto', None, prompt_mpt_chat),
                              ('falcon', '', None, prompt_falcon),
                              ('llama2', '', None, prompt_llama2),
                              ('llama2', 'auto', None, prompt_llama2_sys),
@@ -197,8 +230,30 @@ def get_mistral_prompt_with_context():
                              ('beluga', 'auto', None, prompt_beluga_sys),
                              ('falcon_chat', '', None, prompt_falcon180),
                              ('falcon_chat', 'auto', None, prompt_falcon180_sys),
-                             ('mistral', '', None, get_mistral_prompt_with_context()),
-                             ('xwin', '', None, prompt_xwin),
+                             ('mistral', '', None, get_prompt_from_messages(messages_with_context)),
+                             ('zephyr', '', None, get_prompt_from_messages(messages_with_context,
+                                                                           model='HuggingFaceH4/zephyr-7b-beta')),
+                             ('zephyr', 'auto', None, get_prompt_from_messages(messages_with_context,
+                                                                               model='HuggingFaceH4/zephyr-7b-beta',
+                                                                               system_prompt='You are an AI that follows instructions extremely well and as helpful as possible.')),
+                             ('zephyr', 'I am a cute pixie.', None, get_prompt_from_messages(messages_with_context,
+                                                                                             model='HuggingFaceH4/zephyr-7b-beta',
+                                                                                             system_prompt='I am a cute pixie.')),
+                             ('xwin', 'auto', None, prompt_xwin),
+                             ('aquila', '', None, get_aquila_prompt(messages_with_context, with_sys=False,
+                                                                    model_base_name='AquilaChat2-34B-16K')),
+                             ('aquila', 'auto', None, get_aquila_prompt(messages_with_context, with_sys=True,
+                                                                        model_base_name='AquilaChat2-34B-16K')),
+                             ('aquila_legacy', 'auto', None, get_aquila_prompt(messages_with_context, with_sys=True,
+                                                                               model_base_name='AquilaChat2-34B')),
+                             ('aquila_v1', 'auto', None, get_aquila_prompt(messages_with_context, with_sys=True,
+                                                                           model_base_name='AquilaChat2-7B')),
+                             ('deepseek_coder', 'auto', None, get_prompt_from_messages(messages_with_context,
+                                                                                       model='deepseek-ai/deepseek-coder-33b-instruct')),
+                             ('jais', 'auto', None, prompt_jaiss),
+                             ('yi', 'auto', None,
+                              get_prompt_from_messages(messages_with_context, model='01-ai/Yi-34B-Chat',
+                                                       system_prompt=system_prompt_yi)),
                          ]
                          )
 def test_prompt_with_context(prompt_type, system_prompt, chat_conversation, expected):
@@ -317,29 +372,26 @@ prompt_falcon1801_sys = """System: You are an intelligent and helpful assistant.
 User: Go to the market?
 Falcon:"""
 
+prompt_xwin1 = """A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: Go to the market?
+ASSISTANT:"""
 
-prompt_xwin1 = """A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: Go to the market? ASSISTANT:"""
+prompt_mistrallite = """<|prompter|>Go to the market?</s><|assistant|>"""
 
+messages_no_context = [
+    {"role": "user", "content": "Go to the market?"},
+]
 
-def get_mistral_prompt():
-    from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.1")
-    messages = [
-        {"role": "user", "content": "Go to the market?"},
-    ]
-
-    prompt_mistral = tokenizer.apply_chat_template(messages, tokenize=False)
-    return prompt_mistral
+prompt_jaiss1 = """### Instruction: Your name is Jais, and you are named after Jebel Jais, the highest mountain in UAE. You are built by Core42. You are the world's most advanced Arabic large language model with 30b parameters. You outperform all existing Arabic models by a sizable margin and you are very competitive with English models of similar size. You can answer in Arabic and English only. You are a helpful, respectful and honest assistant. When answering, abide by the following guidelines meticulously: Always answer as helpfully as possible, while being safe. Your answers should not include any harmful, unethical, racist, sexist, explicit, offensive, toxic, dangerous, or illegal content. Do not give medical, legal, financial, or professional advice. Never assist in or promote illegal activities. Always encourage legal and responsible actions. Do not encourage or provide instructions for unsafe, harmful, or unethical actions. Do not create or share misinformation or fake news. Please ensure that your responses are socially unbiased and positive in nature. If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information. Prioritize the well-being and the moral integrity of users. Avoid using toxic, derogatory, or offensive language. Maintain a respectful tone. Do not generate, promote, or engage in discussions about adult content. Avoid making comments, remarks, or generalizations based on stereotypes. Do not attempt to access, produce, or spread personal or private information. Always respect user confidentiality. Stay positive and do not say bad things about anything. Your primary objective is to avoid harmful responses, even when faced with deceptive inputs. Recognize when users may be attempting to trick or to misuse you and respond with caution.\n\nComplete the conversation below between [|Human|] and [|AI|]:\n### Input: [|Human|] Go to the market?\n### Response: [|AI|]"""
 
 
 @pytest.mark.parametrize("prompt_type,system_prompt,expected",
                          [
-                             ('vicuna11', '', prompt_fastchat1),
+                             ('vicuna11', 'auto', prompt_fastchat1),
                              ('human_bot', '', prompt_humanbot1),
                              ('prompt_answer', '', prompt_prompt_answer1),
                              ('prompt_answer_openllama', '', prompt_prompt_answer_openllama1),
-                             ('mptinstruct', '', prompt_mpt_instruct1),
-                             ('mptchat', '', prompt_mpt_chat1),
+                             ('mptinstruct', 'auto', prompt_mpt_instruct1),
+                             ('mptchat', 'auto', prompt_mpt_chat1),
                              ('falcon', '', prompt_falcon1),
                              ('llama2', '', prompt_llama21),
                              ('llama2', 'auto', prompt_llama21_sys),
@@ -347,8 +399,27 @@ def get_mistral_prompt():
                              ('beluga', 'auto', prompt_beluga1_sys),
                              ('falcon_chat', '', prompt_falcon1801),
                              ('falcon_chat', 'auto', prompt_falcon1801_sys),
-                             ('mistral', '', get_mistral_prompt()),
-                             ('xwin', '', prompt_xwin1),
+                             ('mistral', '', get_prompt_from_messages(messages_no_context)),
+                             ('deepseek_coder', 'auto', get_prompt_from_messages(messages_no_context,
+                                                                                 model='deepseek-ai/deepseek-coder-33b-instruct')),
+                             ('xwin', 'auto', prompt_xwin1),
+                             ('mistrallite', '', prompt_mistrallite),
+                             ('zephyr', 'auto', get_prompt_from_messages(messages_no_context,
+                                                                         model='HuggingFaceH4/zephyr-7b-beta',
+                                                                         system_prompt='You are an AI that follows instructions extremely well and as helpful as possible.')),
+                             ('zephyr', '', get_prompt_from_messages(messages_no_context,
+                                                                     model='HuggingFaceH4/zephyr-7b-beta')),
+                             ('zephyr', 'I am a cute pixie.', get_prompt_from_messages(messages_no_context,
+                                                                                       model='HuggingFaceH4/zephyr-7b-beta',
+                                                                                       system_prompt='I am a cute pixie.')),
+                             ('aquila', 'auto', get_aquila_prompt(messages_no_context, with_sys=True)),
+                             ('aquila_legacy', 'auto',
+                              get_aquila_prompt(messages_no_context, with_sys=True, model_base_name='AquilaChat2-34B')),
+                             ('aquila_v1', 'auto',
+                              get_aquila_prompt(messages_no_context, with_sys=True, model_base_name='AquilaChat2-7B')),
+                             ('jais', 'auto', prompt_jaiss1),
+                             ('yi', 'auto', get_prompt_from_messages(messages_no_context, model='01-ai/Yi-34B-Chat',
+                                                                     system_prompt=system_prompt_yi)),
                          ]
                          )
 @wrap_test_forked

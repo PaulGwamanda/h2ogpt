@@ -55,7 +55,8 @@ spec:
         - name: tgi-check
           securityContext:
             {{- toYaml .Values.h2ogpt.securityContext | nindent 12 }}
-          image: busybox:1.36
+          image: "{{ .Values.h2ogpt.initImage.repository | default "busybox" }}:{{ .Values.h2ogpt.initImage.tag | default "1.36" }}"
+          imagePullPolicy: {{ .Values.h2ogpt.initImage.pullPolicy | default "IfNotPresent"}}
           command: ["/bin/sh", "-c"]
           args:
             - >
@@ -70,7 +71,8 @@ spec:
         - name: vllm-check
           securityContext:
             {{- toYaml .Values.h2ogpt.securityContext | nindent 12 }}
-          image: busybox:1.36
+          image: "{{ .Values.h2ogpt.initImage.repository | default "busybox" }}:{{ .Values.h2ogpt.initImage.tag | default "1.36" }}"
+          imagePullPolicy: {{ .Values.h2ogpt.initImage.pullPolicy | default "IfNotPresent"}}
           command: ["/bin/sh", "-c"]
           args:
             - >
@@ -80,7 +82,7 @@ spec:
                 sleep 5;
               done
 {{- end }}
-      {{- with .Values.vllm.imagePullSecrets }}
+      {{- with .Values.h2ogpt.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -118,17 +120,15 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.h2ogpt.resources | nindent 12 }}
-          {{- if not .Values.h2ogpt.externalLLM.enabled }}
           envFrom:
             - configMapRef:
                 name: {{ include "h2ogpt.fullname" . }}-config
-          {{- end }}
           env:
-          {{- if .Values.tgi.enabled }}
+          {{- if and .Values.tgi.enabled (not .Values.h2ogpt.externalLLM.enabled) }}
           - name: h2ogpt_inference_server
             value: "http://{{ include "h2ogpt.fullname" . }}-tgi-inference:{{ .Values.tgi.service.port }}"
           {{- end }}
-          {{- if .Values.vllm.enabled }}
+          {{- if and .Values.vllm.enabled (not .Values.h2ogpt.externalLLM.enabled) }}
           - name: h2ogpt_inference_server
             value: "vllm:{{ include "h2ogpt.fullname" . }}-vllm-inference:{{ .Values.vllm.service.port }}"
           {{- end }}
@@ -169,14 +169,18 @@ spec:
             value: None
           {{- end }}
           volumeMounts:
-            - name: h2ogpt-volume
+            - name: {{ include "h2ogpt.fullname" . }}-volume
               mountPath: /workspace/.cache
               subPath: cache
-            - name: h2ogpt-volume
+            - name: {{ include "h2ogpt.fullname" . }}-volume
               mountPath: /workspace/save
               subPath: save
       volumes:
-        - name: h2ogpt-volume
+        - name: {{ include "h2ogpt.fullname" . }}-volume
+          {{- if not .Values.h2ogpt.storage.useEphemeral }}
+          persistentVolumeClaim:
+            claimName:  {{ include "h2ogpt.fullname" . }}-volume          
+          {{- else}}
           ephemeral:
             volumeClaimTemplate:
               spec:
@@ -185,8 +189,25 @@ spec:
                 resources:
                   requests: 
                     storage: {{ .Values.h2ogpt.storage.size | quote }}
-                storageClassName: {{ .Values.h2ogpt.storage.class | quote }}
+                storageClassName: {{ .Values.h2ogpt.storage.class }}
+          {{- end }}
 {{- end }}
+---
+{{- if and (.Values.h2ogpt.enabled) (not .Values.h2ogpt.storage.useEphemeral) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "h2ogpt.fullname" . }}-volume
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # storageClassName: {{ .Values.h2ogpt.storage.class | quote }}
+  storageClassName: {{ .Values.h2ogpt.storage.class }}
+  resources:
+    requests:
+      storage: {{ .Values.h2ogpt.storage.size | quote }}
+{{- end }}
+
 ---
 {{- if .Values.tgi.enabled }}
 apiVersion: apps/v1
@@ -236,6 +257,10 @@ spec:
                       values:
                         - {{ include "h2ogpt.fullname" . }}
                 topologyKey: failure-domain.beta.kubernetes.io/zone
+      {{- with .Values.tgi.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: {{ include "h2ogpt.fullname" . }}-tgi-inference
           securityContext:
@@ -280,17 +305,21 @@ spec:
             - secretRef:
                 name: {{ .Values.tgi.hfSecret }}
           volumeMounts:
-            - name: h2ogpt-tgi-inference-volume
+            - name: {{ include "h2ogpt.fullname" . }}-tgi-inference-volume
               mountPath: /app/cache
               subPath: cache
-            - name: h2ogpt-tgi-inference-volume
+            - name: {{ include "h2ogpt.fullname" . }}-tgi-inference-volume
               mountPath: /data
               subPath: data
-            - name: h2ogpt-tgi-inference-volume
+            - name: {{ include "h2ogpt.fullname" . }}-tgi-inference-volume
               mountPath: /dev/shm
               subPath: shm
       volumes:
-        - name: h2ogpt-tgi-inference-volume
+        - name: {{ include "h2ogpt.fullname" . }}-tgi-inference-volume
+        {{- if not .Values.tgi.storage.useEphemeral}}
+          persistentVolumeClaim:
+            claimName:  {{ include "h2ogpt.fullname" . }}-tgi-inference-volume      
+          {{- else}}
           ephemeral:
             volumeClaimTemplate:
               spec:
@@ -299,7 +328,23 @@ spec:
                 resources:
                   requests: 
                     storage: {{ .Values.tgi.storage.size | quote }}
-                storageClassName: {{ .Values.tgi.storage.class | quote }}
+                storageClassName: {{ .Values.tgi.storage.class }}
+          {{- end }}
+{{- end }}
+---
+{{- if and (.Values.tgi.enabled) (not .Values.tgi.storage.useEphemeral) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "h2ogpt.fullname" . }}-tgi-inference-volume
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # storageClassName: {{ .Values.h2ogpt.storage.class | quote }}
+  storageClassName: {{ .Values.tgi.storage.class }}
+  resources:
+    requests:
+      storage: {{ .Values.tgi.storage.size | quote }}
 {{- end }}
 ---
 {{- if .Values.vllm.enabled }}
@@ -350,6 +395,10 @@ spec:
                       values:
                         - {{ include "h2ogpt.fullname" . }}
                 topologyKey: failure-domain.beta.kubernetes.io/zone
+      {{- with .Values.vllm.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: {{ include "h2ogpt.fullname" . }}-vllm-inference
           securityContext:
@@ -402,14 +451,18 @@ spec:
             value: "{{ $value }}"
           {{- end }}
           volumeMounts:
-            - name: h2ogpt-vllm-inference-volume
+            - name: {{ include "h2ogpt.fullname" . }}-vllm-inference-volume
               mountPath: /workspace/.cache
               subPath: cache
-            - name: h2ogpt-vllm-inference-volume
+            - name: {{ include "h2ogpt.fullname" . }}-vllm-inference-volume
               mountPath: /dev/shm
               subPath: shm
       volumes:
-        - name: h2ogpt-vllm-inference-volume
+        - name: {{ include "h2ogpt.fullname" . }}-vllm-inference-volume
+          {{- if not .Values.vllm.storage.useEphemeral }}
+          persistentVolumeClaim:
+            claimName: {{ include "h2ogpt.fullname" . }}-vllm-inference-volume
+          {{- else }}
           ephemeral:
             volumeClaimTemplate:
               spec:
@@ -418,6 +471,21 @@ spec:
                 resources:
                   requests: 
                     storage: {{ .Values.vllm.storage.size | quote }}
-                storageClassName: {{ .Values.vllm.storage.class | quote }}
+                storageClassName: {{ .Values.vllm.storage.class }}
+          {{- end }}
 {{- end }}
-
+---
+{{- if and (.Values.vllm.enabled) (not .Values.vllm.storage.useEphemeral) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "h2ogpt.fullname" . }}-vllm-inference-volume
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # storageClassName: {{ .Values.vllm.storage.class | quote }}
+  storageClassName: {{ .Values.vllm.storage.class }}
+  resources:
+    requests:
+      storage: {{ .Values.vllm.storage.size | quote }}
+{{- end }}

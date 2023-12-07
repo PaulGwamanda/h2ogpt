@@ -91,30 +91,66 @@ def make_css_base() -> str:
         position: relative;
     }
     
+    #microphone-button {
+        position: absolute;
+        top: 14px;
+        right: 125px;
+
+        display: flex;
+        justify-content: center;
+        border: 1px solid var(--primary-500) !important;
+
+        @media (max-width: 563px) {
+          width: 20px;
+        }
+    }
+
+    #microphone-button > img {
+        margin-right: 0;
+    }
+
+    #add-button {
+        position: absolute;
+        top: 14px;
+        right: 75px;
+        
+        display: flex;
+        justify-content: center;
+        border: 1px solid var(--primary-500) !important;
+        
+        @media (max-width: 563px) {
+          width: 40px;
+        }
+    }
+    
+    #add-button > img {
+        margin-right: 0;
+    }
+
     #attach-button {
         position: absolute;
-        top: 45px;
+        top: 14px;
         right: 20px;
         
         display: flex;
         justify-content: center;
         border: 1px solid var(--primary-500) !important;
         
-        @media (max-width: 463px) {
-          width: 56px;
+        @media (max-width: 563px) {
+          width: 40px;
         }
     }
     
     #attach-button > img {
-        margin-right: 0;
+        margin-right: 40;
     }
     
     #prompt-form > label > textarea {
-        padding-right: 104px;
+        padding-right: 0px;
         
-        @media (max-width: 463px) {
+        @media (max-width: 563px) {
           min-height: 94px;
-          padding-right: 70px;
+          padding-right: 0px;
         }
     }
 

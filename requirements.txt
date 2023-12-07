@@ -1,13 +1,13 @@
 # for generate (gradio server) and finetune
 datasets==2.13.0
 sentencepiece==0.1.99
-gradio==3.49.0
+gradio==3.50.2
 huggingface_hub==0.16.4
 appdirs==1.4.4
 fire==0.5.0
 docutils==0.20.1
-torch==2.0.1; sys_platform != "darwin" and platform_machine != "arm64"
-torch==2.1.0; sys_platform == "darwin" and platform_machine == "arm64"
+torch==2.1.1; sys_platform != "darwin" and platform_machine != "arm64"
+torch==2.1.1; sys_platform == "darwin" and platform_machine == "arm64"
 evaluate==0.4.0
 rouge_score==0.1.2
 sacrebleu==2.3.1
@@ -20,10 +20,10 @@ pandas==2.0.2
 matplotlib==3.7.1
 loralib==0.1.1
 bitsandbytes==0.41.1
-accelerate==0.23.0
-peft==0.5.0
-transformers==4.34.1
-tokenizers==0.14.1
+accelerate==0.24.1
+peft==0.6.2
+transformers==4.35.2
+tokenizers==0.15.0
 APScheduler==3.10.1
 
 # optional for generate
@@ -62,7 +62,7 @@ instructorembedding==1.0.1
 # for gpt4all .env file, but avoid worrying about imports
 python-dotenv==1.0.0
 
-text-generation==0.6.0
+text-generation==0.6.1
 # for tokenization when don't have HF tokenizer
 tiktoken==0.4.0
 
